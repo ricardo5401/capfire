@@ -8,6 +8,7 @@ class DeploysController < ApplicationController
     branch = params[:branch].presence || 'main'
     app = params[:app]
     env = params[:env]
+    skip_lb = ActiveModel::Type::Boolean.new.cast(params[:skip_lb])
 
     authorize_action!(app: app, env: env, cmd: 'deploy')
 
@@ -20,6 +21,7 @@ class DeploysController < ApplicationController
         env: env,
         branch: branch,
         command: 'deploy',
+        skip_lb: skip_lb,
         triggered_by: current_claims[:sub],
         token_jti: current_claims[:jti]
       ).call do |event, payload|

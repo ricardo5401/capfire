@@ -7,4 +7,8 @@ Rails.application.routes.draw do
 
   # One-shot commands: restart / rollback / status
   resources :commands, only: %i[create]
+
+  # Standalone Load Balancer operations (no deploy attached).
+  post '/lb/drain',   to: 'lb#drain'
+  post '/lb/restore', to: 'lb#restore'
 end

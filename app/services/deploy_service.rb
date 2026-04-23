@@ -1,32 +1,42 @@
+# frozen_string_literal: true
+
 # Orchestrates a full Capfire deploy lifecycle and streams output via a block.
 #
 # Lifecycle:
 #   1. Create Deploy record (status=pending).
-#   2. If env=production, drain the node from Cloudflare LB.
-#   3. Mark deploy running, spawn Capistrano via CapistranoRunner.
+#   2. If LB is configured for this app+env (via capfire.yml), drain the node.
+#   3. Mark deploy running, spawn the command via CommandRunner.
 #   4. Append each output line to the Deploy log and yield it to the caller.
-#   5. Restore Cloudflare LB (always — even on failure) if it was drained.
+#   5. Restore the LB (always — even on failure) if it was drained.
 #   6. Mark deploy success/failed and yield a terminal `:done` event.
+#
+# Whether LB is touched is now driven entirely by per-app `capfire.yml`
+# (see AppConfig#load_balancer_for). `PRODUCTION_ENVS` is gone — a staging env
+# can drain if its yaml says so, and a production env can skip drain if it
+# doesn't. This keeps Capfire honest for nodes that host multiple apps with
+# different topologies.
 #
 # The block receives (event_name, payload_hash) where event_name is one of:
 #   :log, :info, :error, :done
 class DeployService
-  PRODUCTION_ENVS = %w[production prod].freeze
-
   attr_reader :deploy
 
   def initialize(app:, env:, branch:, command: 'deploy', triggered_by: nil, token_jti: nil,
-                 lb_service: CloudflareLbService.new, runner_class: CapistranoRunner,
-                 logger: Rails.logger)
+                 skip_lb: false, app_config: nil, runner_class: CommandRunner,
+                 lb_service_class: CloudflareLbService, logger: Rails.logger)
     @app = app
     @env = env
     @branch = branch
     @command = command
     @triggered_by = triggered_by
     @token_jti = token_jti
-    @lb_service = lb_service
+    @skip_lb = skip_lb
+    @app_config = app_config || AppConfig.new(app: app)
     @runner_class = runner_class
+    @lb_service_class = lb_service_class
     @logger = logger
+    @lb_config = @app_config.load_balancer_for(env)
+    @lb_service = @lb_service_class.new(config: @lb_config)
   end
 
   def call(&block)
@@ -62,9 +72,9 @@ class DeployService
   private
 
   def drain_if_needed
-    return false unless production? && should_manage_lb?
+    return false unless should_manage_lb?
 
-    emit(:info, message: 'draining node from Cloudflare LB')
+    emit(:info, message: "draining origin=#{@lb_config.origin} from Cloudflare LB")
     @drained = @lb_service.drain!
   rescue CloudflareLbService::Error => e
     emit(:error, message: "cloudflare drain failed: #{e.message}")
@@ -75,7 +85,7 @@ class DeployService
     return unless drained
 
     @lb_service.restore!
-    emit(:info, message: 'node restored to Cloudflare LB')
+    emit(:info, message: "restored origin=#{@lb_config.origin} to Cloudflare LB")
   rescue CloudflareLbService::Error => e
     # Log but don't re-raise — the deploy itself may have succeeded.
     emit(:error, message: "cloudflare restore failed: #{e.message}")
@@ -83,14 +93,16 @@ class DeployService
   end
 
   def execute_runner
-    runner = @runner_class.new(app: @app, env: @env, branch: @branch, command: @command)
+    runner = @runner_class.new(
+      app: @app, env: @env, branch: @branch, command: @command, app_config: @app_config
+    )
     @deploy.mark_running!
 
     runner.run do |line|
       @deploy.append_log!("#{line}\n")
       emit(:log, line: line)
     end
-  rescue CapistranoRunner::Error => e
+  rescue CommandRunner::Error => e
     emit(:error, message: e.message)
     1
   end
@@ -102,12 +114,17 @@ class DeployService
     emit(:done, deploy_id: @deploy.id, exit_code: @deploy.exit_code, status: 'failed', error: error.message)
   end
 
-  def production?
-    PRODUCTION_ENVS.include?(@env.to_s.downcase)
-  end
-
+  # LB is managed only when:
+  #   - the caller didn't request skip_lb,
+  #   - AND the command is a 'deploy' (restart/rollback/status don't drain),
+  #   - AND the app+env has a load_balancer block in capfire.yml,
+  #   - AND that block is complete enough to hit the Cloudflare API.
   def should_manage_lb?
-    @command == 'deploy' && @lb_service.configured?
+    return false if @skip_lb
+    return false unless @command == 'deploy'
+    return false if @lb_config.nil?
+
+    @lb_service.configured?
   end
 
   def emit(event, payload)

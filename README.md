@@ -79,15 +79,10 @@ DATABASE_URL=postgresql://capfire:PASSWORD@localhost:5432/capfire_production
 JWT_SECRET=<genera con: openssl rand -hex 64>
 
 # Cloudflare Load Balancer
-# Token con permisos: Zone:Load Balancers:Edit + Account:Load Balancers:Edit
+# Token con permisos: Zone:Load Balancers:Edit + Account:Load Balancers:Edit.
+# Es lo UNICO global para Cloudflare: pool, account y origin viven per-app en
+# cada `capfire.yml`. Ver seccion "Cómo Añadir un Nuevo Repo/App".
 CF_API_TOKEN=<tu CF API token>
-CF_ZONE_ID=<zone ID del dominio -- Dashboard > Overview > Zone ID>
-CF_POOL_ID=<ID del pool que contiene este nodo>
-CF_ACCOUNT_ID=<ID de tu cuenta Cloudflare>
-
-# Direccion de origen de *este* nodo en el pool (campo address del origin).
-# Capfire solo modifica su propia entrada.
-CF_NODE_ORIGIN=10.0.0.10
 
 # Capfire
 # URL publica de este nodo (usada en logs y audit trail)
@@ -321,7 +316,61 @@ server 'app-staging.udocz.com', user: 'deploy', roles: %w[app web db]
 server 'app-prod.udocz.com', user: 'deploy', roles: %w[app web db]
 ```
 
-### 4. (Opcional) Ruta personalizada
+### 4. (Opcional pero recomendado) `capfire.yml`
+
+Si necesitas personalizar comandos, manejar un Load Balancer especifico, o desplegar una app que
+no usa Capistrano, agrega un `capfire.yml` en la raiz del cockpit de la app. **Todas las
+secciones son opcionales**: si no existe el archivo, Capfire usa los defaults de Capistrano y no
+toca ningun Load Balancer.
+
+```yaml
+# /srv/apps/udocz_bot/capfire.yml
+
+# Overrides globales de comandos. Placeholders: %{app}, %{env}, %{branch}.
+commands:
+  deploy:   "bundle exec cap %{env} deploy BRANCH=%{branch}"
+  restart:  "bundle exec cap %{env} puma:restart"
+  rollback: "bundle exec cap %{env} deploy:rollback"
+  status:   "bundle exec cap %{env} deploy:check"
+
+# Configuracion por entorno. Permite diferenciar staging vs production.
+environments:
+  production:
+    load_balancer:
+      pool_id:    "3c9c314b8ddf22a48c1d80496242777c"
+      account_id: "7fd8c19b6d672b6c7e11b83e5f48096d"   # opcional, pools account-scoped
+      origin:     "35.185.55.232"                       # IP de ESTE nodo en el pool
+  staging:
+    load_balancer:
+      enabled: false    # explicito; tambien es el default si falta el bloque
+```
+
+**Defaults (aplican cuando `capfire.yml` no existe o no declara un comando):**
+
+```
+deploy   -> bundle exec cap %{env} deploy BRANCH=%{branch}
+restart  -> bundle exec cap %{env} deploy:restart
+rollback -> bundle exec cap %{env} deploy:rollback
+status   -> bundle exec cap %{env} deploy:check
+```
+
+**Apps en otros lenguajes (no Capistrano):** simplemente define los comandos con lo que tengas:
+
+```yaml
+commands:
+  deploy:  "./scripts/deploy.sh %{branch}"
+  restart: "systemctl restart my-go-service"
+  status:  "systemctl status my-go-service"
+```
+
+**Reglas para el Load Balancer:**
+- Solo Cloudflare por ahora.
+- Se drena el origen solo en `deploy` (no en restart/rollback/status).
+- El `api_token` viene de `CF_API_TOKEN` (ENV global). Pool y origin son per-app.
+- Si el bloque `load_balancer` esta ausente o `enabled: false`, no se toca el LB.
+- Cada instancia de Capfire drena unicamente su propio `origin` (por eso es per-nodo).
+
+### 5. (Opcional) Ruta personalizada del cockpit
 
 Si el directorio no sigue la convencion `$CAPFIRE_APPS_ROOT/<app>`, añade al `.env` de Capfire:
 
@@ -331,7 +380,7 @@ CAPFIRE_APP_DIR_UDOCZ_BOT=/opt/custom/path/udocz_bot
 
 La variable es el slug de la app en mayusculas con caracteres no alfanumericos reemplazados por `_`.
 
-### 5. Crear un token para la nueva app
+### 6. Crear un token para la nueva app
 
 ```bash
 bin/capfire token:create \
@@ -341,7 +390,10 @@ bin/capfire token:create \
   --cmds=deploy,rollback,status
 ```
 
-### 6. Verificar con un deploy de prueba
+Si vas a usar los endpoints `/lb/drain` y `/lb/restore` directamente (orquestadores externos),
+incluye tambien `drain` y `restore` en `--cmds`.
+
+### 7. Verificar con un deploy de prueba
 
 ```bash
 curl -N -X POST https://deploy-node-1.internal.udocz.com/deploys \
@@ -369,11 +421,12 @@ curl -N -X POST https://$CAPFIRE_HOST/deploys \
 
 **Body**
 
-| Campo | Tipo | Requerido | Default |
-|-------|------|-----------|---------|
-| `app` | string | yes | -- |
-| `env` | string | yes | -- |
-| `branch` | string | no | `"main"` |
+| Campo | Tipo | Requerido | Default | Notas |
+|-------|------|-----------|---------|-------|
+| `app` | string | yes | -- | | 
+| `env` | string | yes | -- | |
+| `branch` | string | no | `"main"` | |
+| `skip_lb` | bool | no | `false` | Cuando es `true`, NO drena el Load Balancer. Pensado para orquestadores externos que manejan el drain/restore ellos mismos via `/lb/drain` y `/lb/restore`. |
 
 **Respuesta** (`Content-Type: text/event-stream`)
 
@@ -463,6 +516,75 @@ curl https://$CAPFIRE_HOST/deploys/42 \
   "log": "00:00 deploy:starting\n00:01 deploy:updating\n..."
 }
 ```
+
+---
+
+### `POST /lb/drain` y `POST /lb/restore` -- Operaciones directas del LB
+
+Endpoints que SOLO tocan el Load Balancer, sin disparar un deploy. Pensados para orquestadores
+(GitHub Actions, scripts CI) que necesitan coordinar el drain/restore entre multiples nodos y
+ejecutar los pasos del deploy por fuera -- por ejemplo, precompilar assets centralmente y
+distribuir el mismo artefacto a todos los nodos antes de flipear un origen.
+
+```bash
+# Drenar este nodo del pool
+curl -X POST https://$CAPFIRE_HOST/lb/drain \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"app":"udoczcom","env":"production"}'
+
+# ... ejecutar el trabajo fuera de Capfire ...
+
+# Reincorporar el nodo al pool
+curl -X POST https://$CAPFIRE_HOST/lb/restore \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"app":"udoczcom","env":"production"}'
+```
+
+**Body**
+
+| Campo | Tipo | Requerido | Notas |
+|-------|------|-----------|-------|
+| `app` | string | yes | Debe tener un bloque `load_balancer` en su `capfire.yml` para este env. |
+| `env` | string | yes | |
+
+**Respuesta exitosa (`200 OK`)**
+
+```json
+{
+  "status": "drained",
+  "app": "udoczcom",
+  "env": "production",
+  "pool_id": "3c9c314b8ddf22a48c1d80496242777c",
+  "origin": "35.185.55.232"
+}
+```
+
+**Errores**
+
+- `422 Unprocessable Entity` -- la app no tiene bloque `load_balancer` para ese env, o el bloque
+  esta incompleto (falta `pool_id`, `origin`, o `CF_API_TOKEN`).
+- `502 Bad Gateway` -- error contra la API de Cloudflare. El body incluye el mensaje.
+
+**Flujo tipico con un orquestador externo (ej. udoczcom con 2 nodos):**
+
+```bash
+# 1. Build centralizado de assets en CI, rsync a ambos nodos con los MISMOS hashes.
+rails assets:precompile
+rsync public/assets/ deploy@node1:/srv/shared/assets/
+rsync public/assets/ deploy@node2:/srv/shared/assets/
+
+# 2. Rolling node-by-node
+for node in node1 node2; do
+  curl -X POST https://$node/lb/drain    -H "Authorization: Bearer $TOKEN" -d '{"app":"udoczcom","env":"production"}'
+  curl -N -X POST https://$node/deploys   -H "Authorization: Bearer $TOKEN" -d '{"app":"udoczcom","env":"production","branch":"main","skip_lb":true}'
+  curl -X POST https://$node/lb/restore  -H "Authorization: Bearer $TOKEN" -d '{"app":"udoczcom","env":"production"}'
+done
+```
+
+El `skip_lb: true` en `/deploys` es clave cuando el orquestador ya se encargo del drain via
+`/lb/drain`: evita que Capfire intente drenar por segunda vez (idempotente, pero genera ruido).
 
 ---
 
@@ -616,30 +738,45 @@ POST /deploys         +------------------+
                       +--------+---------+
                                |
                                v
-                      +------------------+     +----------------------+
-                      |  DeployService   |---->| CloudflareLbService  |  (drain)
-                      +--------+---------+     +----------------------+
-                               |
-                               v
-                      +------------------+
-                      | CapistranoRunner |  -- PTY.spawn('bundle exec cap ...')
-                      +--------+---------+
-                               | yields lines
-                               v
-                      +------------------+
-                      |    SseWriter     |  -- writes to response.stream
-                      +------------------+
-                               |
-                               v
-                       Client (curl -N)
+POST /lb/{action}     +------------------+
+  (JWT auth) ------>  |   LbController   |----+
+                      +------------------+    |
+                                              v
+                      +------------------+   +--------------+
+                      |   DeployService  |<--|  AppConfig   |  (reads capfire.yml)
+                      +--------+---------+   +--------------+
+                               |                       |
+                 LB enabled?   |                       |
+                  per-app yml  v                       v
+                      +----------------------+    +------------------+
+                      | CloudflareLbService  |    |   CommandRunner  |
+                      +----------------------+    +--------+---------+
+                                                           | PTY.spawn('sh -c "...")
+                                                           v yields lines
+                                                  +------------------+
+                                                  |    SseWriter     |
+                                                  +--------+---------+
+                                                           v
+                                                    Client (curl -N)
 ```
 
-- **`DeploysController` / `CommandsController`** -- thin, auth + param validation only
-- **`DeployService`** -- owns the lifecycle (DB record + LB drain/restore + runner + terminal event)
-- **`CapistranoRunner`** -- PTY spawn with Open3 fallback; yields raw log lines
-- **`CloudflareLbService`** -- Faraday + retries; fetches pool, flips `enabled`, puts it back
-- **`JwtService`** -- encode/decode + claim-based `authorize!`
-- **`SseWriter`** -- shields the controller from SSE formatting and closed-stream errors
+- **`DeploysController` / `CommandsController`** -- thin, auth + param validation only.
+- **`LbController`** -- standalone `/lb/drain` and `/lb/restore` endpoints for external
+  orchestrators that prefer to run the deploy steps themselves.
+- **`DeployService`** -- owns the lifecycle (DB record + LB drain/restore + runner + terminal event).
+  Decides whether to touch the LB based on `AppConfig#load_balancer_for(env)`; no longer keyed off
+  a hardcoded `PRODUCTION_ENVS` list.
+- **`AppConfig`** -- reads `capfire.yml` from the app's working directory and exposes
+  `command_for(...)` and `load_balancer_for(env)`. Source of truth for "what does deploy mean for
+  this app".
+- **`CommandRunner`** -- formerly `CapistranoRunner`. Runs whatever shell command `AppConfig`
+  returned via `sh -c`. PTY preferred, Open3 fallback. Yields raw log lines.
+- **`CloudflareLbService`** -- Faraday + retries; fetches pool, flips `enabled`, puts it back.
+  Receives a per-instance `LoadBalancerConfig` (pool/origin/account), not globals.
+- **`LoadBalancerConfig`** -- tiny immutable struct built by `AppConfig`. Reads `CF_API_TOKEN`
+  from ENV (the only Cloudflare global left).
+- **`JwtService`** -- encode/decode + claim-based `authorize!`.
+- **`SseWriter`** -- shields the controller from SSE formatting and closed-stream errors.
 
 Puma corre en **1 worker, muchos threads** -- el stream SSE en memoria vive en un solo proceso
 (sin forks que partan conexiones). El worker timeout sube a 1h porque los deploys reales tardan.
