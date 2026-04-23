@@ -1,0 +1,15 @@
+#!/usr/bin/env ruby
+# Capfire CLI entry point.
+#
+# Boots the Rails environment (needed for DB access + JwtService) and hands
+# control to Thor.
+
+ENV['RAILS_ENV'] ||= ENV['RACK_ENV'] || 'development'
+APP_PATH = File.expand_path('../config/application', __dir__)
+
+require_relative '../config/boot'
+require_relative '../config/environment'
+
+require 'capfire_cli'
+
+CapfireCli::Main.start(ARGV)
