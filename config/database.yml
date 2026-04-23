@@ -1,0 +1,16 @@
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  pool: <%= ENV.fetch('RAILS_MAX_THREADS', 16) %>
+
+development:
+  <<: *default
+  url: <%= ENV.fetch('DATABASE_URL', 'postgres://capfire:capfire@localhost:5432/capfire_development') %>
+
+test:
+  <<: *default
+  url: <%= ENV.fetch('DATABASE_URL_TEST', 'postgres://capfire:capfire@localhost:5432/capfire_test') %>
+
+production:
+  <<: *default
+  url: <%= ENV.fetch('DATABASE_URL') %>
