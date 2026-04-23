@@ -9,74 +9,377 @@ watch them happen, line by line, in real time.
 
 ---
 
-## Why
+## Table of Contents
 
-Running `bundle exec cap production deploy` from a laptop works until it doesn't: the connection
-drops, you don't know who ran what, the node keeps serving traffic during deploys, and there's no
-audit trail. Capfire fixes that with minimal ceremony:
-
-- **JWT tokens with scoped permissions** (`apps`, `envs`, `cmds`) per caller
-- **Cloudflare LB drain** before production deploys, auto-restore after (even on failure)
-- **Live SSE output** — watch `cap deploy` stream into your terminal via plain `curl -N`
-- **Persistent audit log** — every deploy is a row in Postgres with full output
-- **Revocable tokens** — compromised key? `bin/capfire token revoke`, done
+1. [Qué es Capfire](#qué-es-capfire)
+2. [Despliegue de Capfire en Producción](#despliegue-de-capfire-en-producción)
+3. [Gestión de Tokens (CLI)](#gestión-de-tokens-cli)
+4. [Cómo Añadir un Nuevo Repo/App](#cómo-añadir-un-nuevo-repoapp)
+5. [Uso de la API](#uso-de-la-api)
+6. [Integración con GitHub Actions](#integración-con-github-actions)
+7. [Seguridad](#seguridad)
+8. [Arquitectura](#arquitectura)
+9. [Notas Operacionales](#notas-operacionales)
+10. [Desarrollo Local](#desarrollo-local)
 
 ---
 
-## Quick start
+## Qué es Capfire
+
+Capfire es un **orquestador de deploys** pensado para equipos que usan Capistrano en servidores
+propios. En lugar de correr `cap production deploy` desde un laptop (que se puede cortar, no deja
+trazas y mantiene el nodo en el LB durante el deploy), Capfire:
+
+- **Autentica** cada petición con JWT firmado y con permisos acotados por app, entorno y comando.
+- **Drena el nodo** del Cloudflare Load Balancer antes de desplegar en producción, y lo
+  reincorpora al terminar (éxito o error), preservando pesos y health checks.
+- **Transmite la salida** de `cap deploy` en tiempo real vía Server-Sent Events -- `curl -N` y
+  ves cada línea mientras ocurre.
+- **Persiste** cada ejecución en Postgres con app, entorno, rama, estado, código de salida y log
+  completo -- auditoria lista.
+- **Permite revocar tokens** individualmente sin rotar el secreto global.
+
+### Stack
+
+- Ruby 3.2 / Rails 7.1 (API mode)
+- PostgreSQL
+- Puma (1 worker, N threads -- SSE en memoria sin forks)
+- JWT (`ruby-jwt` gem)
+- Faraday para llamadas a la API de Cloudflare
+- Thor para el CLI (`bin/capfire`)
+
+---
+
+## Despliegue de Capfire en Producción
+
+### Requisitos
+
+| Componente | Version minima |
+|------------|---------------|
+| Ruby | 3.2.x |
+| Bundler | 2.x |
+| PostgreSQL | 14+ |
+| Puma | 6.x (incluido en Gemfile) |
+| Sistema operativo | Ubuntu 22.04 LTS recomendado |
+
+### Variables de entorno
+
+Copia `.env.example` a `.env` (o usa tu gestor de secretos preferido) y rellena:
 
 ```bash
-# 1. Install deps
-bundle install
+# Rails
+SECRET_KEY_BASE=<genera con: bundle exec rails secret>
 
-# 2. Configure
+# Base de datos
+DATABASE_URL=postgresql://capfire:PASSWORD@localhost:5432/capfire_production
+
+# JWT
+# Secreto con el que se firman todos los tokens.
+# Cambiarlo invalida TODOS los tokens emitidos.
+JWT_SECRET=<genera con: openssl rand -hex 64>
+
+# Cloudflare Load Balancer
+# Token con permisos: Zone:Load Balancers:Edit + Account:Load Balancers:Edit
+CF_API_TOKEN=<tu CF API token>
+CF_ZONE_ID=<zone ID del dominio -- Dashboard > Overview > Zone ID>
+CF_POOL_ID=<ID del pool que contiene este nodo>
+CF_ACCOUNT_ID=<ID de tu cuenta Cloudflare>
+
+# Direccion de origen de *este* nodo en el pool (campo address del origin).
+# Capfire solo modifica su propia entrada.
+CF_NODE_ORIGIN=10.0.0.10
+
+# Capfire
+# URL publica de este nodo (usada en logs y audit trail)
+CAPFIRE_HOST=https://deploy-node-1.internal.udocz.com
+
+# Directorio raiz donde viven los repos de las apps (default: /srv/apps)
+CAPFIRE_APPS_ROOT=/srv/apps
+```
+
+> **Nunca** commitees `.env` al repo. Usa `.gitignore` o un vault (AWS Secrets Manager,
+> HashiCorp Vault, etc.).
+
+### Setup inicial paso a paso
+
+```bash
+# 1. Clonar el repo de Capfire en el servidor
+git clone git@github.com:uDocz/capfire.git /opt/capfire
+cd /opt/capfire
+
+# 2. Instalar dependencias
+bundle install --deployment --without development test
+
+# 3. Configurar entorno
 cp .env.example .env
-$EDITOR .env            # set CAPFIRE_JWT_SECRET, DB, Cloudflare, apps root
+nano .env   # rellenar todas las variables de arriba
 
-# 3. Database
-bin/rails db:create db:migrate
+# 4. Crear base de datos y correr migraciones
+RAILS_ENV=production bundle exec rails db:create db:migrate
 
-# 4. Issue your first token
-bin/capfire token create \
-  --name=ci-main \
+# 5. Generar SECRET_KEY_BASE si no lo tienes
+bundle exec rails secret
+
+# 6. Arrancar Puma
+RAILS_ENV=production bundle exec puma -C config/puma.rb
+```
+
+### Ejemplo de unidad systemd
+
+```ini
+# /etc/systemd/system/capfire.service
+[Unit]
+Description=Capfire Deploy Orchestrator
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/capfire
+EnvironmentFile=/opt/capfire/.env
+ExecStart=/usr/local/bin/bundle exec puma -C config/puma.rb -e production
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Nginx (proxy inverso + SSE)
+
+```nginx
+location /capfire/ {
+    proxy_pass         http://127.0.0.1:3000/;
+    proxy_http_version 1.1;
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+
+    # OBLIGATORIO para SSE -- desactiva el buffer de respuesta
+    proxy_buffering    off;
+    proxy_cache        off;
+    chunked_transfer_encoding on;
+}
+```
+
+> Capfire envia `X-Accel-Buffering: no` en todas las respuestas SSE, pero algunos setups de
+> nginx lo ignoran: asegurate de poner `proxy_buffering off` explicitamente.
+
+---
+
+## Gestión de Tokens (CLI)
+
+El CLI carga el entorno Rails completo (misma DB y secreto que el servidor). Siempre correlo
+**en el servidor**, en el directorio de Capfire:
+
+```bash
+cd /opt/capfire
+RAILS_ENV=production bundle exec bin/capfire <comando>
+```
+
+### Crear tokens
+
+#### Token de administracion total
+
+```bash
+bin/capfire token:create \
+  --name=admin \
   --apps='*' \
   --envs=staging,production \
   --cmds=deploy,restart,rollback,status
+```
 
-# copy the JWT that gets printed. Capfire will never show it again.
+Guarda el JWT que se imprime. Capfire **no lo volvera a mostrar**.
 
-# 5. Boot the server
-bin/rails server -p 3000
+#### Token restringido para GitHub Actions
 
-# 6. Trigger a deploy
-curl -N -X POST http://localhost:3000/deploys \
-  -H "Authorization: Bearer $CAPFIRE_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"app":"my-app","env":"staging","branch":"main"}'
+```bash
+bin/capfire token:create \
+  --name=github-actions \
+  --apps=udoczcom \
+  --envs=staging \
+  --cmds=deploy
+```
+
+#### Token con expiracion
+
+```bash
+bin/capfire token:create \
+  --name=one-shot \
+  --apps=udoczcom \
+  --envs=staging \
+  --cmds=deploy \
+  --expires-in=24h
+```
+
+Unidades soportadas en `--expires-in`: `s`, `m`, `h`, `d`.
+
+### Listar tokens
+
+```bash
+bin/capfire token:list
+```
+
+Muestra id, nombre, jti, claims y estado (`active` / `REVOKED`).
+
+### Revocar un token
+
+```bash
+bin/capfire token:revoke 3                        # por id
+bin/capfire token:revoke a7b3c0f2-...-...         # por jti
+bin/capfire token:revoke 3 --reason="leaked in slack"
+```
+
+La revocacion es doble: marca `api_tokens.revoked_at` e inserta en `revoked_tokens`, por lo
+que el siguiente decode falla inmediatamente.
+
+### Estructura de claims JWT
+
+Cada token lleva estos claims en su payload:
+
+```json
+{
+  "sub":  "github-actions",
+  "jti":  "a7b3c0f2-1234-5678-abcd-ef0123456789",
+  "apps": ["udoczcom"],
+  "envs": ["staging"],
+  "cmds": ["deploy"],
+  "iat":  1745432400,
+  "exp":  null
+}
+```
+
+| Claim | Significado | Wildcard |
+|-------|-------------|---------|
+| `sub` | Nombre legible del token | -- |
+| `jti` | UUID unico; usado para revocar | -- |
+| `apps` | Apps que puede tocar | `["*"]` = todas |
+| `envs` | Entornos permitidos | solo valores explicitos |
+| `cmds` | Comandos permitidos | solo valores explicitos |
+| `iat` | Unix timestamp de emision | -- |
+| `exp` | Unix timestamp de expiracion (null = sin limite) | -- |
+
+Para decodificar un token manualmente (sin verificar firma):
+
+```bash
+echo "<token>" | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool
 ```
 
 ---
 
-## API
+## Cómo Añadir un Nuevo Repo/App
 
-All endpoints require `Authorization: Bearer <jwt>`.
+### 1. Preparar el directorio en el servidor
 
-### `POST /deploys`
+Capfire ejecuta `bundle exec cap <env> deploy BRANCH=<branch>` dentro del directorio de cada app.
+Por defecto busca en `$CAPFIRE_APPS_ROOT/<slug-de-app>` (default: `/srv/apps/<app>`).
 
-Starts a Capistrano deploy. Response is **text/event-stream** — one SSE event per log line plus a
-terminal `done` event.
+```bash
+# En el servidor de deploy
+sudo mkdir -p /srv/apps/udocz_bot
+sudo chown deploy:deploy /srv/apps/udocz_bot
+```
+
+### 2. Estructura de directorios esperada
+
+```
+/srv/apps/udocz_bot/
++-- Capfile
++-- Gemfile          # solo Capistrano + plugins
++-- Gemfile.lock
++-- config/
+    +-- deploy.rb    # configuracion base (repo, usuario, shared_path...)
+    +-- deploy/
+        +-- staging.rb
+        +-- production.rb
+```
+
+> El codigo fuente de la app **no** vive aqui -- Capistrano lo clona en el servidor de
+> aplicacion. Este directorio es solo la "cabina de mando" de Capistrano.
+
+### 3. Configurar `config/deploy.rb`
+
+```ruby
+# /srv/apps/udocz_bot/config/deploy.rb
+lock '~> 3.18'
+
+set :application, 'udocz_bot'
+set :repo_url,    'git@github.com:uDocz/udocz_bot.git'
+set :branch,      ENV.fetch('BRANCH', 'main')   # OBLIGATORIO para que Capfire pase la rama
+set :deploy_to,   '/var/www/udocz_bot'
+
+append :linked_files, '.env'
+append :linked_dirs,  'log', 'tmp/pids', 'tmp/cache'
+```
+
+```ruby
+# /srv/apps/udocz_bot/config/deploy/staging.rb
+server 'app-staging.udocz.com', user: 'deploy', roles: %w[app web db]
+```
+
+```ruby
+# /srv/apps/udocz_bot/config/deploy/production.rb
+server 'app-prod.udocz.com', user: 'deploy', roles: %w[app web db]
+```
+
+### 4. (Opcional) Ruta personalizada
+
+Si el directorio no sigue la convencion `$CAPFIRE_APPS_ROOT/<app>`, añade al `.env` de Capfire:
+
+```bash
+CAPFIRE_APP_DIR_UDOCZ_BOT=/opt/custom/path/udocz_bot
+```
+
+La variable es el slug de la app en mayusculas con caracteres no alfanumericos reemplazados por `_`.
+
+### 5. Crear un token para la nueva app
+
+```bash
+bin/capfire token:create \
+  --name=udocz-bot-ci \
+  --apps=udocz_bot \
+  --envs=staging,production \
+  --cmds=deploy,rollback,status
+```
+
+### 6. Verificar con un deploy de prueba
+
+```bash
+curl -N -X POST https://deploy-node-1.internal.udocz.com/deploys \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"app":"udocz_bot","env":"staging","branch":"main"}'
+```
+
+---
+
+## Uso de la API
+
+Todos los endpoints requieren `Authorization: Bearer <jwt>` (excepto `/healthz`).
+
+### `POST /deploys` -- Iniciar un deploy
+
+```bash
+curl -N -X POST https://$CAPFIRE_HOST/deploys \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"app":"udoczcom","env":"production","branch":"main"}'
+```
+
+> `-N` desactiva el buffer de curl -- necesario para ver el SSE en tiempo real.
 
 **Body**
 
-```json
-{ "app": "my-app", "env": "production", "branch": "main" }
-```
+| Campo | Tipo | Requerido | Default |
+|-------|------|-----------|---------|
+| `app` | string | yes | -- |
+| `env` | string | yes | -- |
+| `branch` | string | no | `"main"` |
 
-**Response** (`Content-Type: text/event-stream`)
+**Respuesta** (`Content-Type: text/event-stream`)
 
 ```
 event: info
-data: {"deploy_id":42,"app":"my-app","env":"production","branch":"main","command":"deploy","message":"starting deploy my-app@main -> production"}
+data: {"deploy_id":42,"app":"udoczcom","env":"production","branch":"main","command":"deploy","message":"starting deploy udoczcom@main -> production"}
 
 event: info
 data: {"message":"draining node from Cloudflare LB"}
@@ -87,6 +390,9 @@ data: {"line":"00:00 deploy:starting"}
 event: log
 data: {"line":"00:01 deploy:updating"}
 
+event: log
+data: {"line":"00:45 deploy:finishing"}
+
 event: info
 data: {"message":"node restored to Cloudflare LB"}
 
@@ -94,254 +400,312 @@ event: done
 data: {"deploy_id":42,"exit_code":0,"status":"success"}
 ```
 
-**Errors** are emitted as `event: error` followed by a `done` event with a non-zero `exit_code`.
+**Tipos de evento SSE**
+
+| Evento | Cuando se emite |
+|--------|----------------|
+| `info` | Eventos del ciclo de vida (inicio, LB drain/restore) |
+| `log` | Cada linea de salida de `cap deploy` |
+| `error` | Excepcion no controlada |
+| `done` | Siempre al final -- comprueba `exit_code` (0 = exito) |
 
 ---
 
-### `POST /commands`
+### `POST /commands` -- Restart, rollback o status
 
-Runs `restart`, `rollback` or `status`. Same SSE shape as `/deploys`.
+```bash
+# Rollback
+curl -N -X POST https://$CAPFIRE_HOST/commands \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"app":"udoczcom","env":"production","cmd":"rollback"}'
 
-**Body**
+# Restart
+curl -N -X POST https://$CAPFIRE_HOST/commands \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"app":"udoczcom","env":"production","cmd":"restart"}'
 
-```json
-{ "app": "my-app", "env": "production", "cmd": "rollback" }
+# Status
+curl -N -X POST https://$CAPFIRE_HOST/commands \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"app":"udoczcom","env":"production","cmd":"status"}'
 ```
 
-Valid `cmd` values: `restart`, `rollback`, `status`.
+Valores validos para `cmd`: `restart`, `rollback`, `status`.
+La respuesta tiene el mismo formato SSE que `/deploys`.
 
 ---
 
-### `GET /deploys/:id`
+### `GET /deploys/:id` -- Consultar un deploy
 
-Fetch a deploy record (including full log) as JSON.
+```bash
+curl https://$CAPFIRE_HOST/deploys/42 \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**Respuesta**
 
 ```json
 {
   "id": 42,
-  "app": "my-app",
+  "app": "udoczcom",
   "env": "production",
   "branch": "main",
   "command": "deploy",
   "status": "success",
   "exit_code": 0,
-  "triggered_by": "ci-main",
+  "triggered_by": "github-actions",
   "started_at": "2026-04-23T21:15:03Z",
   "finished_at": "2026-04-23T21:16:44Z",
   "duration_seconds": 101,
-  "log": "00:00 deploy:starting\n..."
+  "log": "00:00 deploy:starting\n00:01 deploy:updating\n..."
 }
 ```
 
 ---
 
-### `GET /healthz`
-
-Unauthenticated liveness probe. Returns `200 ok`.
-
----
-
-## Authorization
-
-Each token carries three allowlists. A request must match **all three**:
-
-| Claim | Meaning                          | Example                           |
-|-------|----------------------------------|-----------------------------------|
-| `apps` | Which apps the token can touch  | `["app-a", "app-b"]` or `["*"]`   |
-| `envs` | Which environments              | `["staging"]`                     |
-| `cmds` | Which commands                  | `["deploy", "restart"]`           |
-
-`"*"` is the wildcard. It's valid only in `apps` (for multi-app admin tokens); `envs` and `cmds`
-must list specific values.
-
-Revoked tokens are rejected at decode time — both by jti lookup against the `revoked_tokens` table
-and, if you set `exp`, by JWT's own expiry check.
-
-### Token claims (full shape)
-
-```json
-{
-  "sub": "ci-main",
-  "jti": "a7b3c0f2-...",
-  "apps": ["my-app"],
-  "envs": ["staging", "production"],
-  "cmds": ["deploy", "restart", "rollback", "status"],
-  "iat": 1745432400,
-  "exp": null
-}
-```
-
----
-
-## CLI
-
-The CLI runs inside the Rails environment (loads the same DB + secret as the server).
-
-### Create a token
+### `GET /healthz` -- Liveness probe
 
 ```bash
-bin/capfire token create \
-  --name=ci-staging \
-  --apps=my-app,other-app \
+curl https://$CAPFIRE_HOST/healthz
+# 200 ok
+```
+
+No requiere autenticacion. Util para load balancers y monitoreo.
+
+---
+
+## Integración con GitHub Actions
+
+### Workflow completo de ejemplo
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment || 'staging' }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'staging' }}
+    concurrency:
+      group: deploy-${{ inputs.environment || 'staging' }}
+      cancel-in-progress: false   # nunca cancelar un deploy en vuelo
+
+    steps:
+      - name: Trigger deploy via Capfire
+        env:
+          CAPFIRE_TOKEN: ${{ secrets.CAPFIRE_TOKEN }}
+          CAPFIRE_HOST:  ${{ secrets.CAPFIRE_HOST }}
+          TARGET_ENV:    ${{ inputs.environment || 'staging' }}
+        run: |
+          set -euo pipefail
+
+          echo "Deploying branch ${GITHUB_REF_NAME} -> ${TARGET_ENV}"
+
+          curl -N --fail-with-body \
+            -X POST "${CAPFIRE_HOST}/deploys" \
+            -H "Authorization: Bearer ${CAPFIRE_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"app\":\"udoczcom\",\"env\":\"${TARGET_ENV}\",\"branch\":\"${GITHUB_REF_NAME}\"}" \
+          | tee /tmp/capfire_output.txt
+
+          EXIT_CODE=$(grep '^data:' /tmp/capfire_output.txt \
+            | tail -1 \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['exit_code'])" 2>/dev/null || echo 1)
+
+          echo "Deploy finished with exit_code=${EXIT_CODE}"
+          exit "${EXIT_CODE}"
+```
+
+### Secrets de GitHub requeridos
+
+Configura estos secrets en **Settings > Secrets and variables > Actions**:
+
+| Secret | Descripcion |
+|--------|-------------|
+| `CAPFIRE_TOKEN` | JWT emitido con `token:create` |
+| `CAPFIRE_HOST` | URL base del nodo Capfire (ej. `https://deploy.internal.udocz.com`) |
+
+### Token recomendado para Actions
+
+```bash
+# Solo puede hacer deploy de udoczcom en staging
+bin/capfire token:create \
+  --name=github-actions-staging \
+  --apps=udoczcom \
   --envs=staging \
-  --cmds=deploy,restart
+  --cmds=deploy
 
-# Non-expiring admin token (be careful):
-bin/capfire token create --name=admin --apps='*' --envs=staging,production --cmds=deploy,restart,rollback,status
-
-# Short-lived token:
-bin/capfire token create --name=one-shot --apps=my-app --envs=staging --cmds=deploy --expires-in=24h
+# Para produccion (workflow separado con environment protection rules)
+bin/capfire token:create \
+  --name=github-actions-production \
+  --apps=udoczcom \
+  --envs=production \
+  --cmds=deploy,rollback
 ```
-
-Supported `--expires-in` units: `s`, `m`, `h`, `d`.
-
-### List tokens
-
-```bash
-bin/capfire token list
-```
-
-Prints id, name, jti, claims and state (`active` / `REVOKED`).
-
-### Revoke a token
-
-```bash
-bin/capfire token revoke 3                      # by id
-bin/capfire token revoke a7b3c0f2-...-...       # by jti
-bin/capfire token revoke 3 --reason="leaked in slack"
-```
-
-Revocation is two-sided: flips `api_tokens.revoked_at` and inserts into `revoked_tokens` so the
-next decode fails cleanly.
 
 ---
 
-## Cloudflare Load Balancer
+## Seguridad
 
-When `env` is `production` (or `prod`) and Cloudflare is configured, Capfire:
+### Por que JWT con claims
 
-1. **Before** the deploy: sets this node's origin `enabled=false` in the pool.
-2. **After** the deploy (success _or_ failure): sets `enabled=true`.
+Los tokens de Capfire no son strings opacos -- son JWTs con permisos explicitos firmados con
+`JWT_SECRET`. Esto permite:
 
-Configure via `.env`:
+- **Principio de minimo privilegio**: cada caller recibe exactamente los permisos que necesita
+  (`apps`, `envs`, `cmds`). Un token de CI para staging no puede tocar produccion aunque lo
+  intercepten.
+- **Revocacion individual**: comprometer un token no obliga a rotar el secreto global y
+  reinvalidar todos los demas tokens. `token:revoke` es suficiente.
+- **Audit trail**: cada deploy registra `triggered_by` (el `sub` del JWT) y el `jti`, lo que
+  permite rastrear quien hizo que y cuando.
+- **Expiracion opcional**: tokens de corta vida (`--expires-in=1h`) para pipelines CI efimeros.
 
-```
-CF_API_TOKEN=...               # scoped: Zone:Load Balancers:Edit + Account:Load Balancers:Edit
-CF_ACCOUNT_ID=...              # optional — required for account-scoped pools
-CF_POOL_ID=...
-CF_NODE_ORIGIN=10.0.0.10       # must match the `address` field of this node's origin in the pool
-CF_DISABLE=false               # set true to skip all CF calls (handy in staging)
-```
+### HTTPS obligatorio
 
-Capfire **mutates the existing origin entry** (flipping `enabled`) instead of deleting/recreating
-it, so weights, health checks and virtual network attachments are preserved.
+Capfire transmite JWTs y salida de deploys en texto plano sobre HTTP por defecto. En produccion:
 
-If you operate multiple Capfire nodes behind one pool, give each node its own `CF_NODE_ORIGIN`
-pointing at the matching origin address — Capfire will only touch its own entry.
+- **Siempre** pon un proxy inverso (nginx, Caddy) con TLS delante.
+- El token JWT viaja en el header `Authorization` -- sin TLS, cualquiera en la red lo ve.
+- Usa certificados validos (Let's Encrypt, ACM, etc.) -- no self-signed en produccion.
 
----
+### Firewall
 
-## App layout expectations
-
-Capfire executes:
+Capfire no deberia ser accesible desde internet abierto:
 
 ```bash
-cd $CAPFIRE_APPS_ROOT/<app>
-bundle exec cap <env> deploy BRANCH=<branch>
+# Solo permitir acceso desde tu red interna
+ufw allow from 10.0.0.0/8 to any port 3000
+ufw deny 3000
+# Para GitHub Actions considera un tunel o Tailscale
 ```
 
-So for every app you deploy from this node you need:
+### Checklist de seguridad para produccion
 
-- A working directory at `$CAPFIRE_APPS_ROOT/<app>` (default `/srv/apps/<app>`)
-- A Capistrano setup inside it (`Capfile`, `config/deploy.rb`, `config/deploy/<env>.rb`)
-- Capistrano's `BRANCH` variable wired into `set :branch, ENV['BRANCH'] || 'main'`
-
-You can override a single app's path with:
-
-```
-CAPFIRE_APP_DIR_MY_APP=/opt/custom/path
-```
-
-(env var name is the app slug upper-cased, non-alphanumeric replaced with `_`).
+- [ ] `JWT_SECRET` generado con `openssl rand -hex 64` (no hardcodeado)
+- [ ] `SECRET_KEY_BASE` generado con `bundle exec rails secret`
+- [ ] Capfire detras de nginx/Caddy con TLS
+- [ ] Puerto 3000 no expuesto a internet
+- [ ] `CF_API_TOKEN` con permisos minimos (solo Load Balancers Edit)
+- [ ] Tokens de CI con `--envs` y `--apps` restringidos
+- [ ] `.env` fuera del repo y con permisos `600`
 
 ---
 
-## Architecture
+## Arquitectura
 
 ```
-POST /deploys         ┌──────────────────┐
-  (JWT auth) ───────► │ DeploysController│
-                      └─────────┬────────┘
-                                │
-                                ▼
-                      ┌──────────────────┐     ┌──────────────────────┐
-                      │  DeployService   │────►│ CloudflareLbService  │  (drain)
-                      └─────────┬────────┘     └──────────────────────┘
-                                │
-                                ▼
-                      ┌──────────────────┐
-                      │ CapistranoRunner │  ── PTY.spawn('bundle exec cap ...')
-                      └─────────┬────────┘
-                                │ yields lines
-                                ▼
-                      ┌──────────────────┐
-                      │    SseWriter     │  ── writes to response.stream
-                      └──────────────────┘
-                                │
-                                ▼
+POST /deploys         +------------------+
+  (JWT auth) ------>  | DeploysController|
+                      +--------+---------+
+                               |
+                               v
+                      +------------------+     +----------------------+
+                      |  DeployService   |---->| CloudflareLbService  |  (drain)
+                      +--------+---------+     +----------------------+
+                               |
+                               v
+                      +------------------+
+                      | CapistranoRunner |  -- PTY.spawn('bundle exec cap ...')
+                      +--------+---------+
+                               | yields lines
+                               v
+                      +------------------+
+                      |    SseWriter     |  -- writes to response.stream
+                      +------------------+
+                               |
+                               v
                        Client (curl -N)
 ```
 
-- **`DeploysController` / `CommandsController`** — thin, auth + param validation only
-- **`DeployService`** — owns the lifecycle (DB record + LB drain/restore + runner + terminal event)
-- **`CapistranoRunner`** — PTY spawn with Open3 fallback; yields raw log lines
-- **`CloudflareLbService`** — Faraday + retries; fetches pool, flips `enabled`, puts it back
-- **`JwtService`** — encode/decode + claim-based `authorize!`
-- **`SseWriter`** — shields the controller from SSE formatting and closed-stream errors
+- **`DeploysController` / `CommandsController`** -- thin, auth + param validation only
+- **`DeployService`** -- owns the lifecycle (DB record + LB drain/restore + runner + terminal event)
+- **`CapistranoRunner`** -- PTY spawn with Open3 fallback; yields raw log lines
+- **`CloudflareLbService`** -- Faraday + retries; fetches pool, flips `enabled`, puts it back
+- **`JwtService`** -- encode/decode + claim-based `authorize!`
+- **`SseWriter`** -- shields the controller from SSE formatting and closed-stream errors
 
-Puma runs in **1 worker, many threads** — a deploy's in-memory stream lives inside one process,
-so we don't want forks splitting connections. Worker timeout is bumped to 1h because real-world
-deploys run long.
-
----
-
-## Database
-
-Three tables, all Postgres:
-
-| Table            | Purpose                                                        |
-|------------------|----------------------------------------------------------------|
-| `deploys`        | One row per run. Holds app/env/branch, status, exit code, full log |
-| `api_tokens`     | Metadata for every token Capfire has ever issued              |
-| `revoked_tokens` | Fast lookup of revoked `jti`s during token decode             |
-
-Logs live in `deploys.log` (TEXT). If that becomes too much, move to object storage — the
-`append_log!` method is the only place that writes to it.
+Puma corre en **1 worker, muchos threads** -- el stream SSE en memoria vive en un solo proceso
+(sin forks que partan conexiones). El worker timeout sube a 1h porque los deploys reales tardan.
 
 ---
 
-## Operational notes
+## Base de Datos
 
-- **SSE + nginx**: set `proxy_buffering off;` for Capfire's location block. Capfire already sends
-  `X-Accel-Buffering: no` but some setups ignore it.
-- **Log retention**: no built-in rotation. Add a cron to prune `deploys` older than N days if needed.
-- **Concurrent deploys**: Capfire doesn't lock — two deploys of the same app/env will both run.
-  Add a `before_action` lock in `DeploysController` if your Capistrano setup can't handle that.
-- **Restarts mid-deploy**: an in-flight deploy that loses its controller (client disconnect) keeps
-  running. It finishes in the background and the `deploys` row reflects the final state — fetch
-  it with `GET /deploys/:id`.
+Tres tablas, todas en Postgres:
+
+| Tabla | Proposito |
+|-------|-----------|
+| `deploys` | Una fila por ejecucion: app, env, branch, status, exit_code, log completo |
+| `api_tokens` | Metadata de cada token emitido |
+| `revoked_tokens` | Lookup rapido de `jti` revocados durante el decode |
+
+Los logs viven en `deploys.log` (TEXT). Si crece demasiado, muevelos a object storage --
+`append_log!` es el unico punto de escritura.
 
 ---
 
-## Development
+## Notas Operacionales
+
+- **SSE + nginx**: pon `proxy_buffering off;` en el location block de Capfire. Capfire ya envia
+  `X-Accel-Buffering: no` pero algunos setups lo ignoran.
+- **Retencion de logs**: sin rotacion automatica. Añade un cron para purgar `deploys` mas
+  antiguos de N dias si el disco lo requiere.
+- **Deploys concurrentes**: Capfire no bloquea -- dos deploys del mismo app/env correran en
+  paralelo. Añade un `before_action` con mutex en `DeploysController` si Capistrano no lo tolera.
+- **Reinicios mid-deploy**: si el cliente se desconecta, el deploy sigue corriendo en background.
+  Al terminar, la fila en `deploys` refleja el estado final -- consultala con `GET /deploys/:id`.
+- **Cloudflare LB con multiples nodos**: cada nodo tiene su propio `CF_NODE_ORIGIN` apuntando
+  a su direccion en el pool. Capfire solo toca su propia entrada.
+
+---
+
+## Desarrollo Local
 
 ```bash
+# 1. Clonar y dependencias
+git clone git@github.com:uDocz/capfire.git
+cd capfire
 bundle install
-bin/rails db:create db:migrate RAILS_ENV=development
-bin/rails server
+
+# 2. Configurar
+cp .env.example .env
+# Editar .env (puedes dejar CF_* vacios)
+
+# 3. Base de datos
+bin/rails db:create db:migrate
+
+# 4. Arrancar
+bin/rails server -p 3000
+
+# 5. Emitir un token de prueba
+RAILS_ENV=development bin/capfire token:create \
+  --name=local-test --apps='*' --envs=staging --cmds=deploy,restart,rollback,status
+
+# 6. Probar
+curl -N -X POST http://localhost:3000/deploys \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"app":"my-app","env":"staging","branch":"main"}'
 ```
 
-Tests (once added) run with:
+Tests:
 
 ```bash
 bundle exec rspec
@@ -351,4 +715,4 @@ bundle exec rspec
 
 ## License
 
-Proprietary — uDocz internal tooling.
+Proprietary -- uDocz internal tooling.
