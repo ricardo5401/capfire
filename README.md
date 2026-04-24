@@ -54,6 +54,8 @@ trazas y mantiene el nodo en el LB durante el deploy), Capfire:
 
 ### Requisitos
 
+**Capfire en si:**
+
 | Componente | Version minima |
 |------------|---------------|
 | Ruby | 3.2.x |
@@ -61,6 +63,22 @@ trazas y mantiene el nodo en el LB durante el deploy), Capfire:
 | PostgreSQL | 14+ |
 | Puma | 6.x (incluido en Gemfile) |
 | Sistema operativo | Ubuntu 22.04 LTS recomendado |
+
+**Para ejecutar deploys** (ademas de lo anterior, en el mismo server):
+
+| Dep | Por que | Como instalar |
+|-----|---------|---------------|
+| `rsync` | Casi todas las apps hacen `deploy:assets:rsync` para mandar assets precompilados localmente al target | `apt install rsync` |
+| `git` | `git fetch + checkout + reset --hard` del auto-sync | normalmente ya esta |
+| `openssh-client` | Capistrano SSHea a cada target server | normalmente ya esta |
+| `build-essential`, `libpq-dev`, `libyaml-dev`, `zlib1g-dev`, `libssl-dev` | Gems con C extensions (pg, nokogiri, etc.) | `apt install build-essential libpq-dev libyaml-dev zlib1g-dev libssl-dev` |
+| Node.js + Yarn | Apps que precompilan JS localmente (jsbundling/vite/esbuild). Skip si TODAS tus apps usan importmap | `curl -fsSL https://deb.nodesource.com/setup_20.x \| sudo -E bash - && apt install nodejs && npm i -g yarn` |
+
+Verificacion rapida despues de instalar:
+
+```bash
+rsync --version && git --version && node --version && yarn --version
+```
 
 ### Variables de entorno
 
@@ -422,6 +440,13 @@ environments:
 pre_deploy:
   - "bundle install --jobs 4 --retry 2"
   - "yarn install --frozen-lockfile"
+
+# Opcional: notificaciones de Slack al terminar un deploy (exito o fallo).
+# Requiere SLACK_WEBHOOK_URL en el .env de Capfire (o el env var que
+# especifiques en `webhook_env`).
+slack:
+  enabled: true
+  # webhook_env: SLACK_WEBHOOK_UDOCZCOM   # opcional, default SLACK_WEBHOOK_URL
 ```
 
 **Git sync automatico.** Antes de correr el comando de `deploy`, Capfire ejecuta en el
@@ -454,6 +479,56 @@ Uso tipico:
 
 Si no necesitas nada de esto (apps cuyo comando de `deploy` ya maneja dependencias, apps
 no-Ruby), omiti la key `pre_deploy`.
+
+**Notificaciones de Slack.** Cuando una app tiene `slack.enabled: true` en su `capfire.yml`,
+Capfire postea al webhook configurado despues de cada `deploy` (exito o fallo). Setup:
+
+1. Poner `SLACK_WEBHOOK_URL=https://hooks.slack.com/...` en el `.env` de Capfire.
+2. Activar en cada app que quieras que avise:
+   ```yaml
+   slack:
+     enabled: true
+   environments:
+     production:
+       link: "https://app.udocz.com"
+     staging:
+       link: "https://staging.udocz.com"
+   ```
+
+El `link` por env es opcional: si lo configuras, aparece como "Abrir" en el mensaje de Slack
+para saltar rapido a la app desplegada.
+
+Formato del mensaje:
+- Exito: `:rocket: Se desplegaron nuevos cambios en *udoczcom* (production) — Rama: master — by *admin* — Abrir`
+- Fallo: `:x: Fallo el deploy de *udoczcom* (production) — Rama: master — by *admin* — Motivo: exit code 1 — Abrir`
+
+El `by *<autor>*` viene del `sub` del JWT (el `--name` que le diste al token con
+`token create`). Si un token se llama `github-actions-production`, ese es el autor que aparece.
+
+Se salta para `restart`/`rollback`/`status` — solo notifica para `deploy`. Si Slack falla
+(network down, webhook invalido), se loguea pero no aborta el deploy: las notificaciones son
+fire-and-forget.
+
+Si una sola instancia de Capfire sirve multiples apps que deben postear a canales distintos,
+podes crear un webhook por canal y diferenciar via `webhook_env`:
+
+```yaml
+# /srv/apps/udoczcom/capfire.yml
+slack:
+  enabled: true
+  webhook_env: SLACK_WEBHOOK_UDOCZCOM
+
+# /srv/apps/udocz_api/capfire.yml
+slack:
+  enabled: true
+  webhook_env: SLACK_WEBHOOK_UDOCZ_API
+```
+
+Y en el `.env` de Capfire defines ambos:
+```
+SLACK_WEBHOOK_UDOCZCOM=https://hooks.slack.com/services/.../a
+SLACK_WEBHOOK_UDOCZ_API=https://hooks.slack.com/services/.../b
+```
 
 **Defaults (aplican cuando `capfire.yml` no existe o no declara un comando):**
 

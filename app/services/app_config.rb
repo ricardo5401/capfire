@@ -40,6 +40,16 @@ require 'yaml'
 #     - "yarn install"         # Runs after git_sync, chained with `&&`, so
 #                              # any failure aborts the deploy.
 #
+#   slack:                     # Slack notifications after deploy finishes.
+#     enabled: true            # default: false
+#     webhook_env: MY_WEBHOOK  # optional override; default ENV var is
+#                              # SLACK_WEBHOOK_URL.
+#
+#   environments:
+#     production:
+#       link: "https://app..." # optional, appended to the Slack message so
+#                              # the user can jump to the running app.
+#
 # Placeholders supported inside any command string:
 #   %{app}    -> app slug passed to /deploys or /commands
 #   %{env}    -> env name (production, staging, ...)
@@ -100,6 +110,25 @@ class AppConfig
     raw.map(&:to_s).reject(&:empty?)
   end
 
+  # Whether to post Slack notifications for this app on deploy completion
+  # (success or failure). Opt-in per app. Requires a webhook URL available
+  # via env var (default `SLACK_WEBHOOK_URL`).
+  def slack_enabled?
+    slack_section['enabled'] == true
+  end
+
+  # ENV variable name that holds the Slack webhook URL. Lets different apps
+  # post to different channels without committing secrets to yaml.
+  def slack_webhook_env
+    slack_section['webhook_env'].presence || SlackNotifier::DEFAULT_WEBHOOK_ENV
+  end
+
+  # Public URL for the given env (optional). Shown as a "Abrir" link in the
+  # Slack notification. Returns nil when not configured.
+  def link_for(env)
+    env_section(env)['link'].presence
+  end
+
   # Returns a LoadBalancerConfig for the given env, or nil when the app+env
   # does not participate in a load balancer.
   def load_balancer_for(env)
@@ -158,6 +187,10 @@ class AppConfig
 
   def env_section(env)
     (@yaml['environments'] || {})[env.to_s] || {}
+  end
+
+  def slack_section
+    @yaml['slack'] || {}
   end
 
   def format_template(template, env:, branch:)

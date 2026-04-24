@@ -23,7 +23,8 @@ class DeployService
 
   def initialize(app:, env:, branch:, command: 'deploy', triggered_by: nil, token_jti: nil,
                  skip_lb: false, app_config: nil, runner_class: CommandRunner,
-                 lb_service_class: CloudflareLbService, logger: Rails.logger)
+                 lb_service_class: CloudflareLbService, notifier_class: SlackNotifier,
+                 logger: Rails.logger)
     @app = app
     @env = env
     @branch = branch
@@ -34,6 +35,7 @@ class DeployService
     @app_config = app_config || AppConfig.new(app: app)
     @runner_class = runner_class
     @lb_service_class = lb_service_class
+    @notifier_class = notifier_class
     @logger = logger
     @lb_config = @app_config.load_balancer_for(env)
     @lb_service = @lb_service_class.new(config: @lb_config)
@@ -60,12 +62,14 @@ class DeployService
 
     @deploy.mark_finished!(exit_code: exit_code)
     emit(:done, deploy_id: @deploy.id, exit_code: exit_code, status: @deploy.status)
+    notify_slack(success: exit_code.zero?, reason: exit_code.zero? ? nil : "exit code #{exit_code}")
     @deploy
   rescue StandardError => e
     @logger.error("[deploy] #{e.class}: #{e.message}\n#{e.backtrace&.first(5)&.join("\n")}")
     emit(:error, message: "#{e.class}: #{e.message}")
     restore_if_drained(true) if @drained
     finalize_on_error(e)
+    notify_slack(success: false, reason: "#{e.class}: #{e.message}")
     @deploy
   end
 
@@ -125,6 +129,26 @@ class DeployService
     return false if @lb_config.nil?
 
     @lb_service.configured?
+  end
+
+  # Posts a Slack notification. No-op unless the command is `deploy` AND the
+  # app has `slack.enabled: true` in its capfire.yml AND the webhook URL is
+  # configured via ENV.
+  def notify_slack(success:, reason: nil)
+    return unless @command == 'deploy'
+    return unless @app_config.slack_enabled?
+
+    notifier = @notifier_class.new(webhook_env: @app_config.slack_webhook_env, logger: @logger)
+    return unless notifier.configured?
+
+    link = @app_config.link_for(@env)
+    if success
+      notifier.notify_success(app: @app, env: @env, branch: @branch, author: @triggered_by, link: link)
+    else
+      notifier.notify_failure(
+        app: @app, env: @env, branch: @branch, author: @triggered_by, reason: reason, link: link
+      )
+    end
   end
 
   def emit(event, payload)
