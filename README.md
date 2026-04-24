@@ -161,14 +161,24 @@ unica vez en cada cockpit para que las corridas siguientes sean limpias:
 for app in udoczcom udocz_api udocz-institutions; do
   cd /srv/apps/$app
   bundle config set --local deployment 'true'
-  bundle config set --local without 'development:test'
+  bundle config set --local without 'test'       # NOT 'development' — see note below
   bundle install --jobs 4 --retry 2
-  yarn install --frozen-lockfile
+  yarn install --frozen-lockfile                 # skip en apps con solo importmap
 done
 ```
 
 Queda persistido en `.bundle/config` de cada cockpit. Despues de eso, el `bundle install` del
 `pre_deploy` reutiliza esa config y solo instala lo que falta.
+
+> **IMPORTANTE — NO excluyas el grupo `development`.** La convencion Rails estandar ubica
+> `capistrano` y sus plugins (`capistrano-rails`, `capistrano3-puma`, `capistrano-bundler`,
+> etc.) dentro de `group :development do` porque no se necesitan en el runtime de produccion.
+> Pero el cockpit de Capfire ES el entorno que corre `cap` -- el cockpit es "el dev" desde
+> el punto de vista del deploy. Si excluis `development`, capistrano no se instala y
+> `bundle exec cap` falla con `bundler: command not found: cap`.
+>
+> El grupo `test` si podes excluirlo: las gems de rspec/factory_bot/capybara no corren
+> durante el deploy.
 
 > **No uses `--deployment --without development test` como flags inline** en el `pre_deploy` ni
 > en el setup. En Bundler 2.x esos flags estan deprecados, exigen que `Gemfile.lock` y `Gemfile`
