@@ -498,11 +498,12 @@ Capfire postea al webhook configurado despues de cada `deploy` (exito o fallo). 
 El `link` por env es opcional: si lo configuras, aparece como "Abrir" en el mensaje de Slack
 para saltar rapido a la app desplegada.
 
-Formato del mensaje:
-- Exito: `:rocket: Se desplegaron nuevos cambios en *udoczcom* (production) — Rama: master — by *admin* — Abrir`
-- Fallo: `:x: Fallo el deploy de *udoczcom* (production) — Rama: master — by *admin* — Motivo: exit code 1 — Abrir`
+Formato del mensaje: usa Slack Block Kit con `attachments` para obtener barra
+de color (verde para exito, rojo para fallo), header con emoji, grid de 2
+columnas con App/Ambiente/Rama/Por, y un boton "Abrir app" si configuraste
+el `link`. En el caso de fallo, agrega un bloque de codigo con el motivo.
 
-El `by *<autor>*` viene del `sub` del JWT (el `--name` que le diste al token con
+El `Por <autor>` viene del `sub` del JWT (el `--name` que le diste al token con
 `token create`). Si un token se llama `github-actions-production`, ese es el autor que aparece.
 
 Se salta para `restart`/`rollback`/`status` — solo notifica para `deploy`. Si Slack falla
