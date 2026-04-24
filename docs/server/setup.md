@@ -26,7 +26,7 @@ distro-specific; we let you pick the flavor you already use on your fleet.
 From a fresh checkout of the repo:
 
 ```bash
-git clone git@github.com:uDocz/capfire.git
+git clone git@github.com:capfire-project/capfire.git
 cd capfire
 sudo ./scripts/install-server.sh \
   --database-url='postgres://capfire:pass@127.0.0.1:5432/capfire_production'
@@ -91,7 +91,7 @@ See [nginx](#nginx-sse-proxy) below for the SSE-safe config.
 **3. Add your first app.**
 
 ```bash
-sudo -u capfire capfire project add git@github.com:uDocz/udoczcom.git
+sudo -u capfire capfire project add git@github.com:myorg/myapp.git
 ```
 
 Then configure a `capfire.yml` inside the clone. See

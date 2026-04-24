@@ -1,4 +1,4 @@
-module github.com/uDocz/capfire/client
+module github.com/capfire-project/capfire/client
 
 go 1.22
 

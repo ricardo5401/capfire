@@ -36,11 +36,12 @@ curl -s -H "Authorization: Bearer $TOKEN" https://capfire.example.com/tokens/me
 
 ```json
 {
-  "name": "admin",
+  "name": "juan",
   "jti": "6f3a08a7-...",
-  "apps": ["*"],
-  "envs": ["production", "staging"],
-  "cmds": ["deploy", "restart", "rollback", "status"],
+  "grants": [
+    { "app": "myapp-api", "envs": ["staging", "production"], "cmds": ["deploy", "restart"] },
+    { "app": "myapp",     "envs": ["staging"],               "cmds": ["deploy", "restart"] }
+  ],
   "issued_at": "2026-04-24T15:10:30Z",
   "expires_at": null,
   "revoked": false,
@@ -59,7 +60,7 @@ claim → `triggered_by` column). You never see deploys of other users.
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "https://capfire.example.com/deploys?active=true&app=udoczcom&limit=50"
+  "https://capfire.example.com/deploys?active=true&app=myapp&limit=50"
 ```
 
 Query parameters (all optional):
@@ -79,7 +80,7 @@ Response:
   "deploys": [
     {
       "id": 42,
-      "app": "udoczcom",
+      "app": "myapp",
       "env": "production",
       "branch": "master",
       "command": "deploy",
@@ -105,7 +106,7 @@ until the deploy finishes. Connection stays open.
 curl -N -X POST https://capfire.example.com/deploys \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"app":"udoczcom","env":"production","branch":"master"}'
+  -d '{"app":"myapp","env":"production","branch":"master"}'
 ```
 
 **Async.** Returns `202 Accepted` immediately. The deploy runs in a
@@ -116,14 +117,14 @@ caller polls `GET /deploys/:id`.
 curl -X POST https://capfire.example.com/deploys \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"app":"udoczcom","env":"production","branch":"master","async":true}'
+  -d '{"app":"myapp","env":"production","branch":"master","async":true}'
 ```
 
 Request body:
 
 ```json
 {
-  "app":     "udoczcom",
+  "app":     "myapp",
   "env":     "production",
   "branch":  "master",           // optional, defaults to "main"
   "skip_lb": false,              // optional, bypass LB drain/restore
@@ -167,7 +168,7 @@ don't drop the connection during quiet phases.
 {
   "status":    "accepted",
   "deploy_id": 137,
-  "app":       "udoczcom",
+  "app":       "myapp",
   "env":       "production",
   "branch":    "master",
   "track_url": "https://capfire.example.com/deploys/137",
@@ -187,7 +188,7 @@ request returns:
 ```json
 {
   "error": "conflict",
-  "message": "another deploy is already in progress for udoczcom:production",
+  "message": "another deploy is already in progress for myapp:production",
   "active_deploy": {
     "id": 137,
     "command": "deploy",
@@ -223,19 +224,19 @@ deploy).
 curl -N -X POST https://capfire.example.com/commands \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"app":"udoczcom","env":"production","cmd":"restart"}'
+  -d '{"app":"myapp","env":"production","cmd":"restart"}'
 
 # Rollback (async)
 curl -X POST https://capfire.example.com/commands \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"app":"udoczcom","env":"production","cmd":"rollback","async":true}'
+  -d '{"app":"myapp","env":"production","cmd":"rollback","async":true}'
 
 # Status
 curl -N -X POST https://capfire.example.com/commands \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"app":"udoczcom","env":"production","cmd":"status"}'
+  -d '{"app":"myapp","env":"production","cmd":"status"}'
 ```
 
 `cmd` must be one of: `restart`, `rollback`, `status`. Unknown values
@@ -253,14 +254,14 @@ elsewhere.
 curl -X POST https://capfire.example.com/lb/drain \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"app":"udoczcom","env":"production"}'
+  -d '{"app":"myapp","env":"production"}'
 
 # ... do your external deploy work ...
 
 curl -X POST https://capfire.example.com/lb/restore \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"app":"udoczcom","env":"production"}'
+  -d '{"app":"myapp","env":"production"}'
 ```
 
 Token claim needed: `cmds: ["drain"]` / `cmds: ["restore"]`.
@@ -270,7 +271,7 @@ Returns:
 ```json
 {
   "status":  "drained",
-  "app":     "udoczcom",
+  "app":     "myapp",
   "env":     "production",
   "pool_id": "3c9c314b8ddf22a48c1d80496242777c",
   "origin":  "35.185.55.232"
@@ -331,7 +332,7 @@ jobs:
           curl -N --fail-with-body -X POST "${CAPFIRE_HOST}/deploys" \
             -H "Authorization: Bearer ${CAPFIRE_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"app\":\"udoczcom\",\"env\":\"${TARGET_ENV}\",\"branch\":\"${GITHUB_REF_NAME}\"}" \
+            -d "{\"app\":\"myapp\",\"env\":\"${TARGET_ENV}\",\"branch\":\"${GITHUB_REF_NAME}\"}" \
           | tee /tmp/capfire_output.txt
 
           EXIT_CODE=$(grep '^data:' /tmp/capfire_output.txt \
@@ -353,10 +354,10 @@ Token recommendation for Actions:
 # Scoped to staging only
 capfire tokens create \
   --name=gh-actions-staging \
-  --apps=udoczcom --envs=staging --cmds=deploy
+  --grant='myapp:staging:deploy'
 
 # Production — separate token with narrower cmds and Environment protection rules
 capfire tokens create \
   --name=gh-actions-production \
-  --apps=udoczcom --envs=production --cmds=deploy,rollback
+  --grant='myapp:production:deploy,rollback'
 ```

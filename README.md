@@ -37,24 +37,22 @@ Opinionated in all the right places, thin everywhere else.
 Server (on the deploy host):
 
 ```bash
-git clone git@github.com:uDocz/capfire.git
+git clone git@github.com:capfire-project/capfire.git
 cd capfire
 sudo ./scripts/install-server.sh \
   --database-url='postgres://capfire:pass@localhost/capfire_production'
-sudo -u capfire capfire tokens create \
-  --name=me --apps='*' --envs='staging,production' \
-  --cmds='deploy,restart,rollback,status'
+sudo -u capfire capfire tokens create --name=me --grant='*:*:*'
 ```
 
 Client (on your laptop):
 
 ```bash
-git clone git@github.com:uDocz/capfire.git
+git clone git@github.com:capfire-project/capfire.git
 cd capfire
 sudo ./scripts/install-client.sh
 capfire config         # prompts for host + token
 capfire permission     # confirm what you can do
-capfire deploy udoczcom production master
+capfire deploy myapp production master
 ```
 
 ## Documentation
@@ -102,7 +100,7 @@ bin/rails db:prepare
 bin/rails server -p 3000
 
 RAILS_ENV=development bin/capfire tokens create \
-  --name=local --apps='*' --envs=staging --cmds=deploy,restart,rollback,status
+  --name=local --grant='*:staging:deploy,restart,rollback,status'
 ```
 
 Build and run the Go client against it:

@@ -293,8 +293,7 @@ ${C_BOLD}Capfire server installed.${C_RESET}
 Next steps:
   1. Create an admin token for yourself:
        ${C_CYAN}sudo -u $CAPFIRE_USER capfire tokens create \\
-         --name=admin --apps='*' --envs='production,staging' \\
-         --cmds='deploy,restart,rollback,status,drain,restore'${C_RESET}
+         --name=admin --grant='*:*:*'${C_RESET}
 
   2. Add your first app:
        ${C_CYAN}sudo -u $CAPFIRE_USER capfire project add git@github.com:yourorg/yourapp.git${C_RESET}

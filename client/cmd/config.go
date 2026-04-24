@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/uDocz/capfire/client/internal/config"
-	"github.com/uDocz/capfire/client/internal/ui"
+	"github.com/capfire-project/capfire/client/internal/config"
+	"github.com/capfire-project/capfire/client/internal/ui"
 )
 
 var (
@@ -28,7 +28,7 @@ var configCmd = &cobra.Command{
 $XDG_CONFIG_HOME/capfire/config.yml (or ~/.config/capfire/config.yml).
 
 Non-interactive usage:
-  capfire config --host=https://deploy-node-1.internal.udocz.com --token=eyJ...
+  capfire config --host=https://deploy-node-1.internal.example.com --token=eyJ...
 
 Pick a custom location with --path (or the CAPFIRE_CONFIG env var).
 Use --show to print where the config file resolves to.`,

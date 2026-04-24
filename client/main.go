@@ -9,7 +9,7 @@ package main
 import (
 	"os"
 
-	"github.com/uDocz/capfire/client/cmd"
+	"github.com/capfire-project/capfire/client/cmd"
 )
 
 func main() {

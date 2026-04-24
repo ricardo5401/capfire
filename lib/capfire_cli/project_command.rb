@@ -17,13 +17,13 @@ module CapfireCli
       can deploy it. Does NOT run bundler / yarn / capistrano — only the git
       clone. Configure the rest via the app's `capfire.yml`.
 
-      By default `<name>` is derived from the URL (`udoczcom` from
-      `git@github.com:uDocz/udoczcom.git`). Override with `--name`.
+      By default `<name>` is derived from the URL (`myapp` from
+      `git@github.com:myorg/myapp.git`). Override with `--name`.
 
       Examples:
-        bin/capfire project add git@github.com:uDocz/udoczcom.git
-        bin/capfire project add https://github.com/uDocz/udoczcom.git --name=udoczcom
-        bin/capfire project add git@github.com:uDocz/udoczcom.git --branch=production
+        bin/capfire project add git@github.com:myorg/myapp.git
+        bin/capfire project add https://github.com/myorg/myapp.git --name=myapp
+        bin/capfire project add git@github.com:myorg/myapp.git --branch=production
     DESC
     method_option :name,   type: :string, required: false, desc: 'Override the directory name under apps_root'
     method_option :branch, type: :string, required: false, desc: 'Initial branch to check out (default: origin HEAD)'
@@ -78,9 +78,9 @@ module CapfireCli
       Capfire.config.apps_root
     end
 
-    # `git@github.com:uDocz/udoczcom.git`    -> udoczcom
-    # `https://github.com/uDocz/udoczcom.git` -> udoczcom
-    # `https://github.com/uDocz/udoczcom`     -> udoczcom
+    # `git@github.com:myorg/myapp.git`    -> myapp
+    # `https://github.com/myorg/myapp.git` -> myapp
+    # `https://github.com/myorg/myapp`     -> myapp
     def derive_name(url)
       tail = url.to_s.split('/').last.to_s
       tail.sub(/\.git\z/, '').strip

@@ -11,9 +11,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/uDocz/capfire/client/internal/api"
-	"github.com/uDocz/capfire/client/internal/config"
-	"github.com/uDocz/capfire/client/internal/ui"
+	"github.com/capfire-project/capfire/client/internal/api"
+	"github.com/capfire-project/capfire/client/internal/config"
+	"github.com/capfire-project/capfire/client/internal/ui"
 )
 
 // Version is injected at build time via `-ldflags "-X .../cmd.Version=..."`.

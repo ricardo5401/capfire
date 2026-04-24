@@ -3,8 +3,8 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/uDocz/capfire/client/internal/api"
-	"github.com/uDocz/capfire/client/internal/ui"
+	"github.com/capfire-project/capfire/client/internal/api"
+	"github.com/capfire-project/capfire/client/internal/ui"
 )
 
 var (
@@ -23,7 +23,7 @@ Filter by app/env/status or increase the limit as needed.
 
 Examples:
   capfire deployments
-  capfire deployments --app=udoczcom --limit=50
+  capfire deployments --app=myapp --limit=50
   capfire deployments --status=failed`,
 	RunE: runDeployments,
 }

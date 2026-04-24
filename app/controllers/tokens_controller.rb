@@ -3,8 +3,8 @@
 # Endpoints for introspecting the token that authenticated the current request.
 #
 # Used by the Go client's `capfire permission` subcommand to show the logged-in
-# user WHAT they can do (apps, envs, commands) without the user having to
-# decode the JWT by hand.
+# user WHAT they can do (per-app grants) without the user having to decode the
+# JWT by hand.
 #
 # We never return the token itself or anything reversible — only the claims
 # already present inside the JWT payload, enriched with DB metadata
@@ -17,9 +17,7 @@ class TokensController < ApplicationController
     render(json: {
       name: current_claims[:sub],
       jti: current_claims[:jti],
-      apps: Array(current_claims[:apps]),
-      envs: Array(current_claims[:envs]),
-      cmds: Array(current_claims[:cmds]),
+      grants: JwtService.grants_from_claims(current_claims),
       issued_at: timestamp_or(current_claims[:iat]),
       expires_at: timestamp_or(current_claims[:exp]),
       revoked: record&.revoked? || false,

@@ -49,7 +49,7 @@ Queries `GET /tokens/me` and prints the claims of your current token.
 
 ```bash
 $ capfire permission
-Host:     https://capfire.internal.udocz.com
+Host:     https://capfire.internal.example.com
 Token:    admin
 JTI:      6f3a08a7-2c34-4f8c-9b1e-1f2b6d1f11a0
 Apps:     *
@@ -76,18 +76,18 @@ Streaming mode (default): opens an SSE connection to `/deploys` and
 renders each event live. Exit code matches the deploy's exit code.
 
 ```bash
-capfire deploy udoczcom production master
-capfire deploy udoczcom staging feature-branch
-capfire deploy udoczcom production master --skip-lb
+capfire deploy myapp production master
+capfire deploy myapp staging feature-branch
+capfire deploy myapp production master --skip-lb
 ```
 
 Async mode (`--async`): queues the deploy and returns immediately with a
 deploy id and next-step hints.
 
 ```bash
-$ capfire deploy udoczcom production master --async
+$ capfire deploy myapp production master --async
 ✓ Deploy queued: #137 (accepted)
-  app:    udoczcom
+  app:    myapp
   env:    production
   branch: master
 
@@ -133,8 +133,8 @@ resolves — typically `cap ENV deploy:restart`). No git sync, no
 pre-deploy hooks, no LB drain.
 
 ```bash
-capfire restart udoczcom production
-capfire restart udoczcom staging --async
+capfire restart myapp production
+capfire restart myapp staging --async
 ```
 
 Rollback and status aren't exposed as top-level commands in the client
@@ -158,7 +158,7 @@ capfire status DEPLOY_ID --log --tail=500
 ```
 $ capfire status
 ID   STATUS      APP       ENV         BRANCH  CMD      AGE     TOOK
-137  ● running   udoczcom  production  master  deploy   12s ago 12s
+137  ● running   myapp  production  master  deploy   12s ago 12s
 ```
 
 **With a deploy id:** fetches the full deploy detail.
@@ -167,7 +167,7 @@ ID   STATUS      APP       ENV         BRANCH  CMD      AGE     TOOK
 $ capfire status 137
 Deploy:   #137
 Status:   ✓ success
-App:      udoczcom
+App:      myapp
 Env:      production
 Branch:   master
 Command:  deploy
@@ -193,7 +193,7 @@ Lists your recent deploys. Aliases: `capfire deploys`, `capfire list`.
 
 ```bash
 capfire deployments
-capfire deployments --app=udoczcom --limit=50
+capfire deployments --app=myapp --limit=50
 capfire deployments --env=production --status=failed
 ```
 

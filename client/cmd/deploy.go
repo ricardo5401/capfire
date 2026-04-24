@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/uDocz/capfire/client/internal/api"
-	"github.com/uDocz/capfire/client/internal/ui"
+	"github.com/capfire-project/capfire/client/internal/api"
+	"github.com/capfire-project/capfire/client/internal/ui"
 )
 
 var (
@@ -24,9 +24,9 @@ matches the deploy's exit code. With --async, queues the deploy and returns
 immediately with a track URL you can poll via ` + "`capfire status ID`" + `.
 
 Examples:
-  capfire deploy udoczcom production master
-  capfire deploy udoczcom staging feature-x --async
-  capfire deploy udoczcom production master --skip-lb`,
+  capfire deploy myapp production master
+  capfire deploy myapp staging feature-x --async
+  capfire deploy myapp production master --skip-lb`,
 	Args: cobra.RangeArgs(2, 3),
 	RunE: runDeploy,
 }

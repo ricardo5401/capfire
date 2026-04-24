@@ -94,7 +94,7 @@ trap 'rm -f "$TMP_BIN"' EXIT
 pushd "$CLIENT_DIR" >/dev/null
 CGO_ENABLED=0 go build \
   -trimpath \
-  -ldflags "-s -w -X github.com/uDocz/capfire/client/cmd.Version=${VERSION}" \
+  -ldflags "-s -w -X github.com/capfire-project/capfire/client/cmd.Version=${VERSION}" \
   -o "$TMP_BIN" \
   .
 popd >/dev/null
@@ -117,7 +117,7 @@ Next steps:
        ${C_CYAN}capfire permission${C_RESET}
 
   3. Deploy:
-       ${C_CYAN}capfire deploy udoczcom production master${C_RESET}
+       ${C_CYAN}capfire deploy myapp production master${C_RESET}
 
 EOF
 

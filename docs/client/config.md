@@ -17,7 +17,7 @@ Check your resolved path with `capfire config --show`.
 
 ```yaml
 # ~/.config/capfire/config.yml
-host: https://capfire.internal.udocz.com
+host: https://capfire.internal.example.com
 token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImp0aSI6...
 ```
 
@@ -56,8 +56,8 @@ CAPFIRE_CONFIG=~/.config/capfire/production.yml \
 Then:
 
 ```bash
-capfire-staging deploy udoczcom staging master
-capfire-production deploy udoczcom production master
+capfire-staging deploy myapp staging master
+capfire-production deploy myapp production master
 ```
 
 ## Using the client in CI without a file
@@ -77,7 +77,7 @@ Drop the file step, pipe the token in from a secret:
     token: $CAPFIRE_TOKEN
     EOF
     chmod 0600 "$HOME/.config/capfire/config.yml"
-    capfire deploy udoczcom staging "$GITHUB_REF_NAME"
+    capfire deploy myapp staging "$GITHUB_REF_NAME"
 ```
 
 Or skip the file entirely and pass flags inline through a wrapper (we

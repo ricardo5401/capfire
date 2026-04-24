@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/uDocz/capfire/client/internal/sse"
+	"github.com/capfire-project/capfire/client/internal/sse"
 )
 
 // StreamHandler is invoked for every SSE event received. Returning a

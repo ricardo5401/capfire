@@ -39,7 +39,7 @@ keeps the Capistrano defaults.
 ### Full example
 
 ```yaml
-# /srv/apps/udoczcom/capfire.yml
+# /srv/apps/myapp/capfire.yml
 
 # Global command overrides. Placeholders: %{app}, %{env}, %{branch}.
 commands:
@@ -57,11 +57,11 @@ environments:
       pool_id:    "3c9c314b8ddf22a48c1d80496242777c"
       account_id: "7fd8c19b6d672b6c7e11b83e5f48096d"   # optional, account-scoped pools
       origin:     "35.185.55.232"                       # IP of THIS node in the pool
-    link: "https://app.udocz.com"                       # shown as "Open" button in Slack
+    link: "https://app.example.com"                       # shown as "Open" button in Slack
   staging:
     load_balancer:
       enabled: false                                    # also the default when block absent
-    link: "https://staging.udocz.com"
+    link: "https://staging.example.com"
 
 # Opt out of the auto git fetch+checkout+reset before every deploy.
 # Default: true — applies only to the `deploy` command.
@@ -75,7 +75,7 @@ pre_deploy:
 # Slack notifications on deploy completion (success or failure).
 slack:
   enabled: true
-  # webhook_env: SLACK_WEBHOOK_UDOCZCOM                # override default env var
+  # webhook_env: SLACK_WEBHOOK_MYAPP                # override default env var
 ```
 
 ### Defaults (when `capfire.yml` is absent or a key is missing)
@@ -111,7 +111,7 @@ git reset --hard origin/<branch>
 
 This guarantees the cockpit sits on the exact commit you asked for —
 critical when the app precompiles assets locally from the cockpit (e.g.
-`udoczcom`). Restart/rollback/status skip the sync.
+`myapp`). Restart/rollback/status skip the sync.
 
 Opt out per app with `git_sync: false` — useful when:
 
@@ -149,9 +149,9 @@ deploy (success or failure). Setup:
      enabled: true
    environments:
      production:
-       link: "https://app.udocz.com"
+       link: "https://app.example.com"
      staging:
-       link: "https://staging.udocz.com"
+       link: "https://staging.example.com"
    ```
 
 The `link` per env is optional — when set it shows up as an "Open app"
@@ -171,22 +171,22 @@ For per-app routing into different channels, create multiple webhooks and
 differentiate with `webhook_env`:
 
 ```yaml
-# /srv/apps/udoczcom/capfire.yml
+# /srv/apps/myapp/capfire.yml
 slack:
   enabled: true
-  webhook_env: SLACK_WEBHOOK_UDOCZCOM
+  webhook_env: SLACK_WEBHOOK_MYAPP
 
-# /srv/apps/udocz_api/capfire.yml
+# /srv/apps/myapp-api/capfire.yml
 slack:
   enabled: true
-  webhook_env: SLACK_WEBHOOK_UDOCZ_API
+  webhook_env: SLACK_WEBHOOK_MYAPP_API
 ```
 
 And in `/etc/capfire/env`:
 
 ```
-SLACK_WEBHOOK_UDOCZCOM=https://hooks.slack.com/services/.../a
-SLACK_WEBHOOK_UDOCZ_API=https://hooks.slack.com/services/.../b
+SLACK_WEBHOOK_MYAPP=https://hooks.slack.com/services/.../a
+SLACK_WEBHOOK_MYAPP_API=https://hooks.slack.com/services/.../b
 ```
 
 ### Load balancer (Cloudflare)
@@ -223,7 +223,7 @@ By default, Capfire resolves an app's working directory to
 
 ```
 # /etc/capfire/env
-CAPFIRE_APP_DIR_UDOCZCOM=/opt/custom/path/udoczcom
+CAPFIRE_APP_DIR_MYAPP=/opt/custom/path/myapp
 ```
 
 The var name is `CAPFIRE_APP_DIR_<APP>` with the app name upcased and

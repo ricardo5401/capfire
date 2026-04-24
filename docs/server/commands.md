@@ -46,29 +46,47 @@ Run `capfire help <command>` for the built-in Thor help of any subcommand.
 Signs a JWT and records its metadata in the `api_tokens` table. Prints the
 token once on stdout — copy it now, Capfire does not store the JWT itself.
 
+#### `--grant` (recommended — per-app granularity)
+
+```
+--grant='APP:ENVS_CSV:CMDS_CSV'
+```
+
+Repeatable. `*` is the wildcard inside any of the three slots.
+
 ```bash
-# Admin token — any app, any env, every command.
-capfire tokens create \
-  --name=admin \
-  --apps='*' \
-  --envs=staging,production \
-  --cmds=deploy,restart,rollback,status,drain,restore
+# Developer who can deploy myapp-api to both envs, but only staging for myapp.
+capfire tokens create --name=juan \
+  --grant='myapp-api:staging,production:deploy,restart' \
+  --grant='myapp:staging:deploy,restart'
 
-# Scoped token for GitHub Actions deploying only udoczcom staging.
-capfire tokens create \
-  --name=gh-actions-staging \
-  --apps=udoczcom \
-  --envs=staging \
-  --cmds=deploy
+# Admin token — every app, every env, every command.
+capfire tokens create --name=admin \
+  --grant='*:*:*'
 
-# Short-lived token for a pipeline (hours/days supported).
-capfire tokens create \
-  --name=one-shot \
-  --apps=udoczcom \
-  --envs=staging \
-  --cmds=deploy \
+# CI token for a single app + single env.
+capfire tokens create --name=gh-actions-staging \
+  --grant='myapp:staging:deploy'
+
+# Short-lived token for a pipeline.
+capfire tokens create --name=one-shot \
+  --grant='myapp:staging:deploy' \
   --expires-in=24h
 ```
+
+#### `--apps / --envs / --cmds` (legacy — still supported)
+
+The old cartesian-product flags keep working so existing automation
+scripts don't break. Internally they translate into grants.
+
+```bash
+# Equivalent to --grant='myapp:staging,production:deploy,restart'
+capfire tokens create --name=legacy-ci \
+  --apps=myapp --envs=staging,production --cmds=deploy,restart
+```
+
+You cannot mix `--grant` and `--apps`/`--envs`/`--cmds` in the same
+invocation — the CLI rejects the call.
 
 `--expires-in` accepts suffixes `s`, `m`, `h`, `d`. Omit it for
 non-expiring tokens (recommended only for human admin tokens).
@@ -104,13 +122,13 @@ Only runs `git clone` — no `bundle install`, no `capistrano setup`. The app
 owns its own deploy scripts; Capfire just orchestrates.
 
 ```bash
-capfire project add git@github.com:uDocz/udoczcom.git
-capfire project add https://github.com/uDocz/udoczcom.git --name=udocz
-capfire project add git@github.com:uDocz/udoczcom.git --branch=production
+capfire project add git@github.com:myorg/myapp.git
+capfire project add https://github.com/myorg/myapp.git --name=myapp-web
+capfire project add git@github.com:myorg/myapp.git --branch=production
 ```
 
-The name is derived from the URL (`udoczcom` from
-`git@github.com:uDocz/udoczcom.git`) unless `--name` overrides it. If the
+The name is derived from the URL (`myapp` from
+`git@github.com:myorg/myapp.git`) unless `--name` overrides it. If the
 target directory already exists, the command aborts instead of re-cloning.
 
 ### `project list`
@@ -167,20 +185,47 @@ called out in a "Missing required vars" block if blank. Edit
 
 ## JWT claim shape
 
-Every token carries the same claim set:
+Every new token carries a list of per-app grants:
 
 ```json
 {
-  "sub":  "admin",
-  "jti":  "6f3a08a7-2c34-4f8c-9b1e-1f2b6d1f11a0",
-  "apps": ["*"],
-  "envs": ["production", "staging"],
-  "cmds": ["deploy", "restart", "rollback", "status"],
-  "iat":  1712500000,
-  "exp":  1715092000
+  "sub": "juan",
+  "jti": "6f3a08a7-2c34-4f8c-9b1e-1f2b6d1f11a0",
+  "grants": [
+    { "app": "myapp-api", "envs": ["staging", "production"], "cmds": ["deploy", "restart"] },
+    { "app": "myapp",     "envs": ["staging"],               "cmds": ["deploy", "restart"] }
+  ],
+  "iat": 1712500000,
+  "exp": 1715092000
 }
 ```
 
-The wildcard `*` in `apps`, `envs` or `cmds` grants access to every value.
-Keep wildcards for admin and human tokens only — CI and automation tokens
+Authorization succeeds if ANY grant matches the requested
+`{app, env, cmd}`. `*` is the wildcard.
+
+Admin token:
+
+```json
+{
+  "grants": [ { "app": "*", "envs": ["*"], "cmds": ["*"] } ]
+}
+```
+
+Reserve wildcards for admin and human tokens — CI and automation tokens
 should enumerate exactly what they can touch.
+
+### Legacy claims (still accepted)
+
+Tokens emitted before the grants redesign carry a flat cartesian shape:
+
+```json
+{
+  "apps": ["myapp"],
+  "envs": ["production", "staging"],
+  "cmds": ["deploy", "restart"]
+}
+```
+
+The server translates them into grants on the fly (one grant per `app`
+listed, with the same `envs`/`cmds`). Old tokens keep working
+indefinitely — no migration required.

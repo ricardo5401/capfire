@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/uDocz/capfire/client/internal/api"
-	"github.com/uDocz/capfire/client/internal/ui"
+	"github.com/capfire-project/capfire/client/internal/api"
+	"github.com/capfire-project/capfire/client/internal/ui"
 )
 
 var restartAsync bool
@@ -20,7 +20,7 @@ capfire.yml resolves — typically ` + "`cap ENV deploy:restart`" + `).
 Streams log output by default. Use --async to queue and return immediately.
 
 Example:
-  capfire restart udoczcom production`,
+  capfire restart myapp production`,
 	Args: cobra.ExactArgs(2),
 	RunE: runRestart,
 }

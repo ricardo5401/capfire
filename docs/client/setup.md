@@ -17,7 +17,7 @@ your laptop (or a CI runner) and talks HTTP to a Capfire server.
 Clone the repo (or download the tarball) and run:
 
 ```bash
-git clone git@github.com:uDocz/capfire.git
+git clone git@github.com:capfire-project/capfire.git
 cd capfire
 
 # System-wide install (requires sudo for /usr/local/bin).
@@ -58,7 +58,7 @@ capfire config
 
 Interactive prompts for:
 
-- **Host** — e.g. `https://capfire.internal.udocz.com`. Must include scheme.
+- **Host** — e.g. `https://capfire.internal.example.com`. Must include scheme.
 - **Token** — the JWT your admin emitted (input is masked).
 
 The config lands at `$XDG_CONFIG_HOME/capfire/config.yml` (or
@@ -67,7 +67,7 @@ The config lands at `$XDG_CONFIG_HOME/capfire/config.yml` (or
 Non-interactive usage works too:
 
 ```bash
-capfire config --host=https://capfire.internal.udocz.com --token=eyJ...
+capfire config --host=https://capfire.internal.example.com --token=eyJ...
 ```
 
 Then verify the token was accepted:
@@ -82,10 +82,10 @@ Until we publish GitHub releases, you have two shortcuts:
 
 ```bash
 # 1. If you have Go locally:
-go install github.com/uDocz/capfire/client@latest
+go install github.com/capfire-project/capfire/client@latest
 
 # 2. One-liner from a clone:
-git clone --depth=1 git@github.com:uDocz/capfire.git /tmp/capfire
+git clone --depth=1 git@github.com:capfire-project/capfire.git /tmp/capfire
 sudo /tmp/capfire/scripts/install-client.sh
 ```
 
