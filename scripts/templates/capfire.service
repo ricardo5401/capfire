@@ -1,0 +1,35 @@
+[Unit]
+Description=Capfire deploy orchestrator
+Documentation=https://github.com/uDocz/capfire
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__CAPFIRE_USER__
+Group=__CAPFIRE_USER__
+WorkingDirectory=__CAPFIRE_HOME__
+EnvironmentFile=/etc/capfire/env
+
+# Resolved at install time by scripts/install-server.sh. Points to the exact
+# `bundle` wrapper under __CAPFIRE_HOME__/bin-wrappers so RVM/rbenv/asdf
+# users don't need a shell-loaded PATH for systemd.
+ExecStart=__CAPFIRE_HOME__/bin-wrappers/bundle exec puma -C config/puma.rb
+
+# Long deploys block the worker for minutes — don't let systemd think it crashed.
+TimeoutStartSec=60
+TimeoutStopSec=120
+
+Restart=on-failure
+RestartSec=5
+
+# Hardening — Capfire itself doesn't need to write outside its tree except the
+# apps root. Adjust if you point CAPFIRE_APPS_ROOT somewhere else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__CAPFIRE_HOME__ __CAPFIRE_APPS_ROOT__ /etc/capfire
+
+[Install]
+WantedBy=multi-user.target
