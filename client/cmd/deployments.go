@@ -3,8 +3,8 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/capfire-project/capfire/client/internal/api"
-	"github.com/capfire-project/capfire/client/internal/ui"
+	"github.com/ricardo5401/capfire/client/internal/api"
+	"github.com/ricardo5401/capfire/client/internal/ui"
 )
 
 var (

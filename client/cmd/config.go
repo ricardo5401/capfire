@@ -10,8 +10,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/capfire-project/capfire/client/internal/config"
-	"github.com/capfire-project/capfire/client/internal/ui"
+	"github.com/ricardo5401/capfire/client/internal/config"
+	"github.com/ricardo5401/capfire/client/internal/ui"
 )
 
 var (

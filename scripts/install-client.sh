@@ -94,7 +94,7 @@ trap 'rm -f "$TMP_BIN"' EXIT
 pushd "$CLIENT_DIR" >/dev/null
 CGO_ENABLED=0 go build \
   -trimpath \
-  -ldflags "-s -w -X github.com/capfire-project/capfire/client/cmd.Version=${VERSION}" \
+  -ldflags "-s -w -X github.com/ricardo5401/capfire/client/cmd.Version=${VERSION}" \
   -o "$TMP_BIN" \
   .
 popd >/dev/null

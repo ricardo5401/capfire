@@ -37,7 +37,7 @@ Opinionated in all the right places, thin everywhere else.
 Server (on the deploy host):
 
 ```bash
-git clone git@github.com:capfire-project/capfire.git
+git clone git@github.com:ricardo5401/capfire.git
 cd capfire
 sudo ./scripts/install-server.sh \
   --database-url='postgres://capfire:pass@localhost/capfire_production'
@@ -47,7 +47,7 @@ sudo -u capfire capfire tokens create --name=me --grant='*:*:*'
 Client (on your laptop):
 
 ```bash
-git clone git@github.com:capfire-project/capfire.git
+git clone git@github.com:ricardo5401/capfire.git
 cd capfire
 sudo ./scripts/install-client.sh
 capfire config         # prompts for host + token
