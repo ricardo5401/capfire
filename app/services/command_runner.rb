@@ -17,6 +17,13 @@ require 'shellwords'
 # identical to interactive usage. If PTY is unavailable (unlikely on Linux
 # but possible in minimal containers without /dev/ptmx), we fall back to
 # Open3 with line-buffered pipes.
+#
+# Every spawned command runs inside `Bundler.with_unbundled_env` because
+# Capfire itself is a bundled Rails app: its process environment carries
+# `BUNDLE_GEMFILE`, `RUBYOPT=-rbundler/setup`, `BUNDLE_PATH`, etc. pointing
+# to Capfire's own bundle. Without the unbundled wrapper, `bundle install`
+# and `bundle exec` in a child app's cockpit resolve to Capfire's Gemfile
+# and install gems into Capfire's vendor/bundle — classic bundler leak.
 class CommandRunner
   class Error < StandardError; end
   class AppNotFound < Error; end
@@ -39,7 +46,11 @@ class CommandRunner
 
     Rails.logger.info("[runner] cd #{work_dir} && #{command_string}")
 
-    run_with_pty(command_string, &block)
+    # Strip Capfire's bundler env before spawning so the child app resolves
+    # its own Gemfile/bundle path. See class-level comment for context.
+    Bundler.with_unbundled_env do
+      run_with_pty(command_string, &block)
+    end
   rescue PTY::ChildExited => e
     e.status.exitstatus || 1
   end
