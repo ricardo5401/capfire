@@ -388,14 +388,14 @@ Por defecto busca en `$CAPFIRE_APPS_ROOT/<slug-de-app>` (default: `/srv/apps/<ap
 
 ```bash
 # En el servidor de deploy
-sudo mkdir -p /srv/apps/udocz_bot
-sudo chown deploy:deploy /srv/apps/udocz_bot
+sudo mkdir -p /srv/apps/udoczcom
+sudo chown deploy:deploy /srv/apps/udoczcom
 ```
 
 ### 2. Estructura de directorios esperada
 
 ```
-/srv/apps/udocz_bot/
+/srv/apps/udoczcom/
 +-- Capfile
 +-- Gemfile          # solo Capistrano + plugins
 +-- Gemfile.lock
@@ -412,25 +412,25 @@ sudo chown deploy:deploy /srv/apps/udocz_bot
 ### 3. Configurar `config/deploy.rb`
 
 ```ruby
-# /srv/apps/udocz_bot/config/deploy.rb
+# /srv/apps/udoczcom/config/deploy.rb
 lock '~> 3.18'
 
-set :application, 'udocz_bot'
-set :repo_url,    'git@github.com:uDocz/udocz_bot.git'
+set :application, 'udoczcom'
+set :repo_url,    'git@github.com:uDocz/udoczcom.git'
 set :branch,      ENV.fetch('BRANCH', 'main')   # OBLIGATORIO para que Capfire pase la rama
-set :deploy_to,   '/var/www/udocz_bot'
+set :deploy_to,   '/var/www/udoczcom'
 
 append :linked_files, '.env'
 append :linked_dirs,  'log', 'tmp/pids', 'tmp/cache'
 ```
 
 ```ruby
-# /srv/apps/udocz_bot/config/deploy/staging.rb
+# /srv/apps/udoczcom/config/deploy/staging.rb
 server 'app-staging.udocz.com', user: 'deploy', roles: %w[app web db]
 ```
 
 ```ruby
-# /srv/apps/udocz_bot/config/deploy/production.rb
+# /srv/apps/udoczcom/config/deploy/production.rb
 server 'app-prod.udocz.com', user: 'deploy', roles: %w[app web db]
 ```
 
@@ -442,7 +442,7 @@ secciones son opcionales**: si no existe el archivo, Capfire usa los defaults de
 toca ningun Load Balancer.
 
 ```yaml
-# /srv/apps/udocz_bot/capfire.yml
+# /srv/apps/udoczcom/capfire.yml
 
 # Overrides globales de comandos. Placeholders: %{app}, %{env}, %{branch}.
 commands:
@@ -591,7 +591,7 @@ commands:
 Si el directorio no sigue la convencion `$CAPFIRE_APPS_ROOT/<app>`, añade al `.env` de Capfire:
 
 ```bash
-CAPFIRE_APP_DIR_UDOCZ_BOT=/opt/custom/path/udocz_bot
+CAPFIRE_APP_DIR_UDOCZCOM=/opt/custom/path/udoczcom
 ```
 
 La variable es el slug de la app en mayusculas con caracteres no alfanumericos reemplazados por `_`.
@@ -600,8 +600,8 @@ La variable es el slug de la app en mayusculas con caracteres no alfanumericos r
 
 ```bash
 bin/capfire token create \
-  --name=udocz-bot-ci \
-  --apps=udocz_bot \
+  --name=udoczcom-ci \
+  --apps=udoczcom \
   --envs=staging,production \
   --cmds=deploy,rollback,status
 ```
@@ -615,7 +615,7 @@ incluye tambien `drain` y `restore` en `--cmds`.
 curl -N -X POST https://deploy-node-1.internal.udocz.com/deploys \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"app":"udocz_bot","env":"staging","branch":"main"}'
+  -d '{"app":"udoczcom","env":"staging","branch":"main"}'
 ```
 
 ---

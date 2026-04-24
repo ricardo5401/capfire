@@ -18,6 +18,33 @@ class DeploysController < ApplicationController
 
   SUBSYSTEM = 'deploys#create'
 
+  DEFAULT_LIMIT = 20
+  MAX_LIMIT = 100
+
+  # GET /deploys
+  #
+  # Lists deploys triggered by the current token holder (`sub` claim). Never
+  # exposes deploys from other people — keeps the client honest about "mine
+  # only" by default. Supports a few optional filters:
+  #
+  #   ?active=true   => only status in (pending, running)
+  #   ?app=NAME      => filter by app
+  #   ?env=NAME      => filter by env
+  #   ?status=NAME   => arbitrary status filter
+  #   ?limit=N       => cap rows (default 20, max 100)
+  def index
+    scope = Deploy.where(triggered_by: current_claims[:sub]).recent
+
+    scope = scope.active          if truthy?(params[:active])
+    scope = scope.where(app: params[:app])       if params[:app].present?
+    scope = scope.where(env: params[:env])       if params[:env].present?
+    scope = scope.where(status: params[:status]) if params[:status].present?
+
+    scope = scope.limit(parse_limit(params[:limit]))
+
+    render(json: { deploys: scope.map(&:as_status_json) })
+  end
+
   def create
     params.require(:app)
     params.require(:env)
@@ -66,5 +93,18 @@ class DeploysController < ApplicationController
       branch: branch,
       message: 'Deploy queued. Slack will notify on completion if enabled; poll the track_url for status.'
     }
+  end
+
+  def truthy?(value)
+    ActiveModel::Type::Boolean.new.cast(value)
+  end
+
+  def parse_limit(raw)
+    return DEFAULT_LIMIT if raw.blank?
+
+    value = raw.to_i
+    return DEFAULT_LIMIT if value <= 0
+
+    [ value, MAX_LIMIT ].min
   end
 end
