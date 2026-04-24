@@ -67,7 +67,15 @@ class SlackNotifier
   def post(text)
     return unless configured?
 
-    Faraday.post(@webhook_url, JSON.generate(text: text), 'Content-Type' => 'application/json')
+    response = Faraday.post(@webhook_url, JSON.generate(text: text), 'Content-Type' => 'application/json')
+
+    if response.success?
+      @logger.info("[slack] posted OK (HTTP #{response.status})")
+    else
+      @logger.error("[slack] webhook returned HTTP #{response.status}: #{response.body.to_s[0, 200]}")
+    end
+
+    response
   rescue StandardError => e
     @logger.error("[slack] notification failed: #{e.class}: #{e.message}")
   end

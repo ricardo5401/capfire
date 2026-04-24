@@ -133,15 +133,28 @@ class DeployService
 
   # Posts a Slack notification. No-op unless the command is `deploy` AND the
   # app has `slack.enabled: true` in its capfire.yml AND the webhook URL is
-  # configured via ENV.
+  # configured via ENV. Each skip branch logs a clear reason so missing
+  # notifications can be diagnosed from Capfire's logs instead of guessing.
   def notify_slack(success:, reason: nil)
-    return unless @command == 'deploy'
-    return unless @app_config.slack_enabled?
+    unless @command == 'deploy'
+      @logger.info("[slack] skipped: command=#{@command} is not 'deploy'")
+      return
+    end
 
-    notifier = @notifier_class.new(webhook_env: @app_config.slack_webhook_env, logger: @logger)
-    return unless notifier.configured?
+    unless @app_config.slack_enabled?
+      @logger.info("[slack] skipped: app=#{@app} has no `slack.enabled: true` in capfire.yml")
+      return
+    end
+
+    webhook_env = @app_config.slack_webhook_env
+    notifier = @notifier_class.new(webhook_env: webhook_env, logger: @logger)
+    unless notifier.configured?
+      @logger.warn("[slack] skipped: ENV['#{webhook_env}'] is blank — cannot post webhook")
+      return
+    end
 
     link = @app_config.link_for(@env)
+    @logger.info("[slack] posting #{success ? 'success' : 'failure'} for app=#{@app} env=#{@env}")
     if success
       notifier.notify_success(app: @app, env: @env, branch: @branch, author: @triggered_by, link: link)
     else
