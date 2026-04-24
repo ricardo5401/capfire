@@ -19,8 +19,11 @@ module Capfire
     # Autoload lib/ for the CLI support code.
     config.autoload_lib(ignore: %w[assets tasks])
 
-    # Stream-friendly response buffering defaults.
-    config.middleware.delete Rack::ETag if config.middleware.include?(Rack::ETag)
+    # Stream-friendly response buffering defaults. Rack::ETag would buffer
+    # the full response body to compute a hash, which breaks SSE streaming.
+    # `MiddlewareStack#delete` uses `delete_if` internally, so it is a safe
+    # no-op when Rack::ETag is not part of the API-only default stack.
+    config.middleware.delete Rack::ETag
 
     # Time zone — all timestamps use UTC internally; Europe/Berlin for display only.
     config.time_zone = 'UTC'
