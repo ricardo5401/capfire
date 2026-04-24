@@ -27,9 +27,14 @@ module CapfireCli
     DESC
     method_option :name,   type: :string, required: false, desc: 'Override the directory name under apps_root'
     method_option :branch, type: :string, required: false, desc: 'Initial branch to check out (default: origin HEAD)'
+    NAME_PATTERN = /\A[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}\z/
+
     def add(url)
       name = options[:name].presence || derive_name(url)
       raise Thor::Error, "could not derive a name from URL: #{url}" if name.blank?
+      unless name.match?(NAME_PATTERN)
+        raise Thor::Error, "invalid app name '#{name}': must match #{NAME_PATTERN.source}"
+      end
 
       target = File.join(apps_root, name)
 
@@ -82,9 +87,11 @@ module CapfireCli
     end
 
     def git_clone!(url:, target:, branch: nil)
+      # `--` separates flags from positional args so a malicious URL starting
+      # with `-` cannot be interpreted as a git option.
       cmd = [ 'git', 'clone' ]
       cmd += [ '--branch', branch ] if branch.present?
-      cmd += [ url, target ]
+      cmd += [ '--', url, target ]
 
       stdout_err, status = Open3.capture2e(*cmd)
       return if status.success?

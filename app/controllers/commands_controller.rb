@@ -16,14 +16,14 @@ class CommandsController < ApplicationController
     params.require(:env)
     params.require(:cmd)
 
-    app = params[:app]
-    env = params[:env]
-    cmd = params[:cmd]
-    branch = params[:branch].presence || 'main'
-    async = ActiveModel::Type::Boolean.new.cast(params[:async])
+    app    = safe_identifier!(params[:app], as: 'app', pattern: APP_PATTERN)
+    env    = safe_identifier!(params[:env], as: 'env', pattern: ENV_PATTERN)
+    cmd    = params[:cmd].to_s
+    branch = safe_branch!(params[:branch].presence || 'main')
+    async  = ActiveModel::Type::Boolean.new.cast(params[:async])
 
     unless ALLOWED.include?(cmd)
-      render(json: { error: 'bad_request', message: "unknown command: #{cmd}" }, status: :bad_request)
+      render(json: { error: 'bad_request', message: 'unknown command' }, status: :bad_request)
       return
     end
 

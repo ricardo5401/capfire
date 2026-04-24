@@ -30,29 +30,36 @@ class DeploysController < ApplicationController
   #   ?active=true   => only status in (pending, running)
   #   ?app=NAME      => filter by app
   #   ?env=NAME      => filter by env
-  #   ?status=NAME   => arbitrary status filter
+  #   ?status=NAME   => one of Deploy::STATUSES
   #   ?limit=N       => cap rows (default 20, max 100)
   def index
     scope = Deploy.where(triggered_by: current_claims[:sub]).recent
+    scope = scope.active if truthy?(params[:active])
 
-    scope = scope.active          if truthy?(params[:active])
-    scope = scope.where(app: params[:app])       if params[:app].present?
-    scope = scope.where(env: params[:env])       if params[:env].present?
-    scope = scope.where(status: params[:status]) if params[:status].present?
+    if params[:app].present?
+      scope = scope.where(app: safe_identifier!(params[:app], as: 'app', pattern: APP_PATTERN))
+    end
+    if params[:env].present?
+      scope = scope.where(env: safe_identifier!(params[:env], as: 'env', pattern: ENV_PATTERN))
+    end
+    if params[:status].present?
+      raise InvalidParameter, 'invalid status' unless Deploy::STATUSES.include?(params[:status])
+
+      scope = scope.where(status: params[:status])
+    end
 
     scope = scope.limit(parse_limit(params[:limit]))
-
     render(json: { deploys: scope.map(&:as_status_json) })
   end
 
   def create
     params.require(:app)
     params.require(:env)
-    app = params[:app]
-    env = params[:env]
-    branch = params[:branch].presence || 'main'
+    app    = safe_identifier!(params[:app], as: 'app', pattern: APP_PATTERN)
+    env    = safe_identifier!(params[:env], as: 'env', pattern: ENV_PATTERN)
+    branch = safe_branch!(params[:branch].presence || 'main')
     skip_lb = ActiveModel::Type::Boolean.new.cast(params[:skip_lb])
-    async = ActiveModel::Type::Boolean.new.cast(params[:async])
+    async   = ActiveModel::Type::Boolean.new.cast(params[:async])
 
     authorize_action!(app: app, env: env, cmd: 'deploy')
 
@@ -68,11 +75,15 @@ class DeploysController < ApplicationController
   end
 
   # GET /deploys/:id
+  #
+  # Only returns deploys triggered by the same token holder. Prevents a valid
+  # token from reading log output of deploys run by other users — logs may
+  # contain stack traces, secrets leaked by the deploy command, etc.
   def show
-    deploy = Deploy.find(params[:id])
+    deploy = Deploy.find_by(id: params[:id], triggered_by: current_claims[:sub])
+    return render(json: { error: 'not_found' }, status: :not_found) unless deploy
+
     render(json: deploy.as_status_json.merge(log: deploy.log))
-  rescue ActiveRecord::RecordNotFound
-    render(json: { error: 'not_found' }, status: :not_found)
   end
 
   private

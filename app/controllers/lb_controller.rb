@@ -46,7 +46,9 @@ class LbController < ApplicationController
   def require_app_and_env!
     params.require(:app)
     params.require(:env)
-    [ params[:app], params[:env] ]
+    app = safe_identifier!(params[:app], as: 'app', pattern: APP_PATTERN)
+    env = safe_identifier!(params[:env], as: 'env', pattern: ENV_PATTERN)
+    [ app, env ]
   end
 
   # Returns [service, config] when ready, or renders an error and returns nil.
