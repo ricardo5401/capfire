@@ -1,0 +1,154 @@
+# Release workflow — triggered on pushing a `v*` tag (e.g. `v0.1.0`).
+#
+# Cross-compiles the Go client for Linux and macOS on amd64 + arm64, builds
+# .deb packages for the Linux targets, generates checksums, and publishes
+# everything as a GitHub Release.
+#
+# How to cut a release:
+#
+#   git tag v0.1.0
+#   git push origin v0.1.0
+#
+# GitHub Actions takes it from there. The resulting release exposes:
+#
+#   capfire-v0.1.0-linux-amd64.tar.gz
+#   capfire-v0.1.0-linux-arm64.tar.gz
+#   capfire-v0.1.0-darwin-amd64.tar.gz
+#   capfire-v0.1.0-darwin-arm64.tar.gz
+#   capfire_0.1.0_amd64.deb
+#   capfire_0.1.0_arm64.deb
+#   checksums.txt
+
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------------------------------
+  # Build the Go binary for each OS/arch combination, upload as artifact.
+  # ------------------------------------------------------------------------
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: linux,  arch: amd64, runner: ubuntu-latest }
+          - { os: linux,  arch: arm64, runner: ubuntu-latest }
+          - { os: darwin, arch: amd64, runner: macos-latest  }
+          - { os: darwin, arch: arm64, runner: macos-latest  }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: client/go.sum
+
+      - name: Build binary
+        working-directory: client
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          ARCHIVE="capfire-${VERSION}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
+
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/ricardo5401/capfire/client/cmd.Version=${VERSION}" \
+            -o capfire .
+
+          tar -czf "../${ARCHIVE}" capfire
+          cd ..
+          # shasum works on both Linux and macOS; sha256sum is Linux-only.
+          shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capfire-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            capfire-*.tar.gz
+            capfire-*.tar.gz.sha256
+          retention-days: 1
+
+  # ------------------------------------------------------------------------
+  # Build .deb packages for Linux amd64 and arm64 using nfpm.
+  # ------------------------------------------------------------------------
+  package-deb:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [ amd64, arm64 ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: capfire-linux-${{ matrix.arch }}
+          path: downloaded
+
+      - name: Extract binary
+        run: |
+          mkdir -p staging
+          tar -xzf downloaded/capfire-*-linux-${{ matrix.arch }}.tar.gz -C staging
+
+      - name: Install nfpm
+        env:
+          NFPM_VERSION: 2.38.0
+        run: |
+          curl -sL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
+            | tar -xz -C /usr/local/bin nfpm
+
+      - name: Build .deb
+        env:
+          VERSION: ${{ github.ref_name }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          # Strip leading 'v' from semver — .deb versions follow Debian policy.
+          export VERSION_NUMBER="${VERSION#v}"
+          envsubst < packaging/debian/nfpm.yaml.tmpl > /tmp/nfpm.yaml
+          mkdir -p dist
+          nfpm pkg --packager deb --config /tmp/nfpm.yaml --target "dist/capfire_${VERSION_NUMBER}_${ARCH}.deb"
+          shasum -a 256 dist/*.deb > "dist/capfire_${VERSION_NUMBER}_${ARCH}.deb.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capfire-deb-${{ matrix.arch }}
+          path: |
+            dist/*.deb
+            dist/*.deb.sha256
+          retention-days: 1
+
+  # ------------------------------------------------------------------------
+  # Aggregate artifacts, build checksums.txt, publish the release.
+  # ------------------------------------------------------------------------
+  release:
+    needs: [ build, package-deb ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Consolidate checksums
+        working-directory: dist
+        run: |
+          cat *.sha256 | sort > checksums.txt
+          rm -f *.sha256
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/capfire-*.tar.gz
+            dist/capfire_*.deb
+            dist/checksums.txt

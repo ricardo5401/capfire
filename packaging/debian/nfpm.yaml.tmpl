@@ -1,0 +1,31 @@
+# nfpm template for the Capfire developer CLI .deb package.
+#
+# `envsubst` renders this into the final nfpm.yaml during the release
+# workflow — VERSION_NUMBER and ARCH come from the GitHub Actions env.
+#
+# Install manually:
+#   sudo dpkg -i capfire_0.1.0_amd64.deb
+#   sudo apt-get install -f   # if dpkg complains about deps (unlikely — static binary)
+
+name: capfire
+arch: ${ARCH}
+platform: linux
+version: ${VERSION_NUMBER}
+section: devel
+priority: optional
+maintainer: Ricardo <ricardo5401@users.noreply.github.com>
+description: |
+  Capfire developer CLI. Talks JWT-authenticated HTTPS to a Capfire
+  deploy server: trigger deploys, stream logs over SSE, inspect token
+  permissions, list your deploys.
+vendor: ricardo5401
+homepage: https://github.com/ricardo5401/capfire
+license: MIT
+
+contents:
+  - src: ./staging/capfire
+    dst: /usr/local/bin/capfire
+    file_info:
+      mode: 0755
+      owner: root
+      group: root

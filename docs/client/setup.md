@@ -3,47 +3,101 @@
 The Capfire client is a single static binary written in Go. It runs on
 your laptop (or a CI runner) and talks HTTP to a Capfire server.
 
-## What you need
+Pick whichever install method matches how you got to this machine. All of
+them land the same `capfire` binary on your `PATH`.
+
+## Prerequisites
 
 - A Unix-like OS (Linux, macOS, WSL).
-- A Capfire server URL and a bearer token (ask your admin, or create one
-  with `capfire tokens create` on the server).
-- Go 1.22+ **only while we build releases**. Once there are GitHub
-  releases the installer will download a pre-built binary — no Go
-  required.
+- A Capfire server URL and a bearer token issued by the server admin
+  (`bin/capfire tokens create` on the server).
 
-## Install
+## Install method 1 — one-liner (no clone, no Go)
 
-Clone the repo (or download the tarball) and run:
+Fastest path for end-users once Capfire has a public release:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/ricardo5401/capfire/main/scripts/download-client.sh | bash
+```
+
+Customize via env vars:
+
+```bash
+PREFIX=$HOME/.local  curl -sSL .../download-client.sh | bash      # user-local install
+VERSION=v0.1.0       curl -sSL .../download-client.sh | bash      # pin a version
+```
+
+The script downloads the appropriate tarball from the latest GitHub
+Release, verifies its SHA256 against `checksums.txt`, installs the
+binary with mode 0755.
+
+> The repo must be **public** for this to work — GitHub API returns 404
+> on private releases without auth. While private, pass
+> `GH_TOKEN=<personal-access-token>` to reach the API.
+
+## Install method 2 — Homebrew (macOS / Linuxbrew)
+
+Once the Homebrew tap is published:
+
+```bash
+brew tap ricardo5401/capfire
+brew install capfire
+```
+
+Upgrade later with `brew upgrade capfire`.
+
+## Install method 3 — apt (Debian / Ubuntu)
+
+Download the `.deb` for your architecture from the
+[latest release](https://github.com/ricardo5401/capfire/releases/latest)
+and install with `dpkg`:
+
+```bash
+# Replace <version> and <arch> (amd64 or arm64) with the matching release.
+curl -LO https://github.com/ricardo5401/capfire/releases/download/v<version>/capfire_<version>_<arch>.deb
+sudo dpkg -i capfire_<version>_<arch>.deb
+```
+
+The package ships a single file: `/usr/local/bin/capfire`.
+
+## Install method 4 — from a repo checkout
+
+If you already cloned the repo (typical for contributors):
 
 ```bash
 git clone git@github.com:ricardo5401/capfire.git
 cd capfire
 
-# System-wide install (requires sudo for /usr/local/bin).
+# Build from source (requires Go 1.22+).
 sudo ./scripts/install-client.sh
 
-# Or user-scoped install (no sudo; make sure $HOME/.local/bin is on PATH).
+# Or download pre-built from the latest release (no Go required).
+sudo ./scripts/install-client.sh --from-release
+
+# User-scoped install (no sudo; add $HOME/.local/bin to PATH).
 ./scripts/install-client.sh --prefix=$HOME/.local
 ```
-
-The installer:
-
-1. Builds the Go binary from `client/`, injecting the output of
-   `git describe` as the version string.
-2. Installs it to `$PREFIX/bin/capfire` with mode 0755 via atomic
-   `install -m 0755` — no half-written binaries if the build fails.
-3. Offers to run `capfire config` for you at the end.
 
 Flags:
 
 | Flag | Default | Purpose |
 |---|---|---|
+| `--from-release` | off | Download from GitHub Release instead of building |
 | `--prefix DIR` | `/usr/local` | Install prefix |
-| `--version VER` | git describe | Override embedded version string |
+| `--version VER` | git describe | Source mode: embed in binary. Release mode: which tag to fetch |
 | `--no-config` | off | Skip the "run config now?" prompt |
 
-Verify:
+## Install method 5 — `go install`
+
+If you have Go installed and the repo is public:
+
+```bash
+go install github.com/ricardo5401/capfire/client@latest
+```
+
+The binary lands in `$(go env GOPATH)/bin/capfire`.
+
+## Verify
 
 ```bash
 capfire --version
@@ -76,32 +130,30 @@ Then verify the token was accepted:
 capfire permission
 ```
 
-## Installing on a clean machine (no repo checkout)
-
-Until we publish GitHub releases, you have two shortcuts:
-
-```bash
-# 1. If you have Go locally:
-go install github.com/ricardo5401/capfire/client@latest
-
-# 2. One-liner from a clone:
-git clone --depth=1 git@github.com:ricardo5401/capfire.git /tmp/capfire
-sudo /tmp/capfire/scripts/install-client.sh
-```
-
 ## Updating
 
+Re-run whichever method you used to install. A few examples:
+
 ```bash
-cd capfire
-git pull
-sudo ./scripts/install-client.sh
+# one-liner:  curl -sSL .../download-client.sh | bash
+# brew:       brew upgrade capfire
+# apt:        sudo dpkg -i capfire_<new-version>_<arch>.deb
+# from repo:  cd capfire && git pull && sudo ./scripts/install-client.sh --from-release
 ```
 
 ## Uninstalling
 
 ```bash
+# Manual install:
 sudo rm /usr/local/bin/capfire            # or $HOME/.local/bin/capfire
 rm ~/.config/capfire/config.yml
+
+# Homebrew:
+brew uninstall capfire
+brew untap ricardo5401/capfire
+
+# Debian/Ubuntu:
+sudo dpkg -r capfire
 ```
 
 ## Troubleshooting

@@ -1,28 +1,34 @@
 #!/usr/bin/env bash
 #
-# Capfire client installer.
+# Capfire client installer (from a checkout of the repo).
 #
-# Builds the Go CLI from source and installs it as `$PREFIX/bin/capfire`.
-# Defaults to `/usr/local` (requires sudo). Use `--prefix=$HOME/.local` for
-# a user-scoped install — make sure `$HOME/.local/bin` is on your PATH.
+# Two modes:
 #
-# When there is no GitHub release yet, this script expects you to run it
-# from a checkout of the capfire repo (Fase 5 will flip this to a binary
-# download).
+#   --from-source  (default)  Build the Go CLI from client/ and install it.
+#                             Requires Go 1.22+.
+#   --from-release            Download the latest GitHub Release binary for
+#                             this OS/arch (no Go required). Forwards the
+#                             call to scripts/download-client.sh.
+#
+# For a one-liner install on a fresh machine without cloning the repo,
+# use scripts/download-client.sh directly via `curl | bash`.
 #
 # Usage:
-#   ./scripts/install-client.sh                # install to /usr/local (needs sudo)
-#   ./scripts/install-client.sh --prefix=$HOME/.local
-#   ./scripts/install-client.sh --version
+#   ./scripts/install-client.sh                        # build from source
+#   ./scripts/install-client.sh --from-release         # download + install
+#   ./scripts/install-client.sh --prefix=$HOME/.local  # user-scoped
 #
 # Options:
-#   --prefix DIR   Install prefix (default: /usr/local)
-#   --version VER  Embed a version string in the binary (default: git describe)
-#   --no-config    Skip the "run capfire config now?" prompt at the end
-#   -h, --help     Show this help
+#   --from-release     Download pre-built binary instead of building
+#   --prefix DIR       Install prefix (default: /usr/local)
+#   --version VER      Embed / pin a version string
+#                        - source build: injected via -ldflags
+#                        - release mode: which release tag to fetch (e.g. v0.1.0)
+#   --no-config        Skip the "run capfire config now?" prompt at the end
+#   -h, --help         Show this help
 #
-# Requirements:
-#   - Go 1.22+ (download: https://go.dev/doc/install)
+# Requirements for --from-source: Go 1.22+ (download: https://go.dev/doc/install)
+# Requirements for --from-release: curl, tar, shasum
 
 set -euo pipefail
 
@@ -41,11 +47,13 @@ fail() { printf '%s✗%s %s\n' "$C_RED"   "$C_RESET" "$*" >&2; exit 1; }
 PREFIX="/usr/local"
 VERSION=""
 SKIP_CONFIG=false
+FROM_RELEASE=false
 
-usage() { sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() { sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --from-release) FROM_RELEASE=true; shift ;;
     --prefix)       PREFIX="$2"; shift 2 ;;
     --prefix=*)     PREFIX="${1#*=}"; shift ;;
     --version)      VERSION="$2"; shift 2 ;;
@@ -55,6 +63,17 @@ while [[ $# -gt 0 ]]; do
     *) fail "unknown argument: $1 (see --help)" ;;
   esac
 done
+
+# -----------------------------------------------------------------------------
+# Release mode: delegate to scripts/download-client.sh
+# -----------------------------------------------------------------------------
+if [[ "$FROM_RELEASE" == true ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  DOWNLOADER="$SCRIPT_DIR/download-client.sh"
+  [[ -x "$DOWNLOADER" ]] || fail "expected $DOWNLOADER to exist"
+  env PREFIX="$PREFIX" VERSION="${VERSION:-latest}" "$DOWNLOADER"
+  exit $?
+fi
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLIENT_DIR="$SRC_DIR/client"

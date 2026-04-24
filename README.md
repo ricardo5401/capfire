@@ -47,9 +47,16 @@ sudo -u capfire capfire tokens create --name=me --grant='*:*:*'
 Client (on your laptop):
 
 ```bash
+# Once there is a public release:
+curl -sSL https://raw.githubusercontent.com/ricardo5401/capfire/main/scripts/download-client.sh | bash
+
+# Or via Homebrew:
+brew tap ricardo5401/capfire && brew install capfire
+
+# Or from a clone (builds from source):
 git clone git@github.com:ricardo5401/capfire.git
-cd capfire
-sudo ./scripts/install-client.sh
+cd capfire && sudo ./scripts/install-client.sh
+
 capfire config         # prompts for host + token
 capfire permission     # confirm what you can do
 capfire deploy myapp production master
