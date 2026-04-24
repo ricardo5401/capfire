@@ -10,7 +10,7 @@ gem 'pg', '~> 1.5'
 gem 'puma', '~> 6.4'
 
 # Auth
-gem 'jwt', '~> 2.7'
+gem 'jwt', '~> 3.1'
 
 # HTTP client for Cloudflare API
 gem 'faraday', '~> 2.9'
