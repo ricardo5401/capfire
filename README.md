@@ -172,14 +172,14 @@ secret tokens) que estan en `credentials.yml.enc` y requieren la `master.key` pa
 ### Bundler config del cockpit (una vez por app)
 
 Si tu `capfire.yml` tiene un `pre_deploy` que corre `bundle install`, configura Bundler una
-unica vez en cada cockpit para que las corridas siguientes sean limpias:
+unica vez en cada cockpit. **No actives `deployment: true`** en los cockpits (ver recuadro
+abajo). Solo excluis el grupo `test` y listo:
 
 ```bash
 # En /srv/apps/udoczcom, /srv/apps/udocz_api, /srv/apps/udocz-institutions
 for app in udoczcom udocz_api udocz-institutions; do
   cd /srv/apps/$app
-  bundle config set --local deployment 'true'
-  bundle config set --local without 'test'       # NOT 'development' — see note below
+  bundle config set --local without 'test'       # NOT 'development' — ver nota
   bundle install --jobs 4 --retry 2
   yarn install --frozen-lockfile                 # skip en apps con solo importmap
 done
@@ -187,6 +187,22 @@ done
 
 Queda persistido en `.bundle/config` de cada cockpit. Despues de eso, el `bundle install` del
 `pre_deploy` reutiliza esa config y solo instala lo que falta.
+
+> **IMPORTANTE — NO uses `deployment: true` en el cockpit.** Ese modo fuerza a Bundler a modo
+> frozen: cualquier mismatch entre `Gemfile.lock` y los gemspecs reales (incluso bugs del gem
+> como un dep declarado dos veces en el gemspec, cosa que pasa con gems legacy tipo
+> `sendgrid 1.2.4`) aborta el `bundle install` con `"Bundler found incorrect dependencies in
+> the lockfile"`. El cockpit NO es el server de runtime -- es un ambiente transitorio que
+> solo corre `cap` para disparar el deploy real. Ser tolerante con el lockfile es razonable
+> y pragmatico.
+>
+> Si ya activaste `deployment: true` antes y queres sacarlo:
+>
+> ```bash
+> cd /srv/apps/<app>
+> bundle config unset --local deployment
+> bundle config unset --local frozen
+> ```
 
 > **IMPORTANTE — NO excluyas el grupo `development`.** La convencion Rails estandar ubica
 > `capistrano` y sus plugins (`capistrano-rails`, `capistrano3-puma`, `capistrano-bundler`,
