@@ -1,0 +1,29 @@
+# Dependabot config — keeps Bundler, Go modules, and GitHub Actions up to date.
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # Rails / server dependencies
+  - package-ecosystem: bundler
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [ dependencies, ruby ]
+
+  # Go client dependencies
+  - package-ecosystem: gomod
+    directory: "/client"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: [ dependencies, go ]
+
+  # GitHub Actions workflow pinned versions
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    labels: [ dependencies, ci ]

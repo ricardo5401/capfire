@@ -1,6 +1,6 @@
 [Unit]
 Description=Capfire deploy orchestrator
-Documentation=https://github.com/uDocz/capfire
+Documentation=https://github.com/ricardo5401/capfire
 After=network-online.target
 Wants=network-online.target
 
