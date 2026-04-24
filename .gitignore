@@ -16,3 +16,8 @@
 /config/credentials/*.key
 /coverage
 *.gem
+
+# Go client build artifacts
+/client/dist
+/client/capfire
+/client/capfire-*
