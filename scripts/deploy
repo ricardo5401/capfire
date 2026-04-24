@@ -1,11 +1,23 @@
 #!/usr/bin/env bash
-# deploy — pretty SSE client for Capfire's /deploys and /commands endpoints.
+# deploy — pretty client for Capfire's /deploys and /commands endpoints.
 #
 # Capfire streams events as Server-Sent Events (JSON-wrapped), which is great
 # for programmatic consumers but ugly on a terminal: ANSI color codes arrive
 # escaped inside JSON strings so the shell can't render them. This wrapper
 # parses each SSE line, extracts the log/message/done payload, and prints it
 # with ANSI codes decoded — matching how `cap deploy` looks when run locally.
+#
+# Also supports:
+#   --async    fire-and-forget; server returns 202 + deploy_id and runs the
+#              deploy in background. Slack notifies on completion (if the
+#              app has `slack.enabled: true` in its capfire.yml).
+#
+# Exit codes:
+#   0   deploy succeeded (or was queued, in async mode)
+#   1   deploy failed
+#   2   bad usage
+#   3   missing `jq` dependency
+#   4   another deploy is already in progress (HTTP 409)
 #
 # Requires: curl, jq.
 #
@@ -16,11 +28,12 @@
 # Usage:
 #   scripts/deploy <app> <env> [branch]
 #   scripts/deploy <app> <env> [branch] --cmd=restart|rollback|status
+#   scripts/deploy <app> <env> [branch] --async
 #
 # Examples:
 #   scripts/deploy udoczcom production master
-#   scripts/deploy udocz_api staging RELEASE
-#   scripts/deploy udoczcom production master --cmd=restart
+#   scripts/deploy udocz_api staging RELEASE --async
+#   scripts/deploy udoczcom production master --cmd=restart --async
 
 set -euo pipefail
 
@@ -28,16 +41,18 @@ app="${1:-}"
 env="${2:-}"
 branch="${3:-main}"
 cmd="deploy"
+async=false
 
-# Parse optional --cmd=... flag (can be the 3rd or 4th arg)
+# Parse optional flags (can appear in any order after positional args)
 for arg in "$@"; do
   case "$arg" in
     --cmd=*) cmd="${arg#--cmd=}" ;;
+    --async) async=true ;;
   esac
 done
 
 if [[ -z "$app" || -z "$env" ]]; then
-  echo "usage: $0 <app> <env> [branch] [--cmd=deploy|restart|rollback|status]" >&2
+  echo "usage: $0 <app> <env> [branch] [--cmd=deploy|restart|rollback|status] [--async]" >&2
   exit 2
 fi
 
@@ -49,29 +64,71 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 3
 fi
 
-if [[ "$cmd" == "deploy" ]]; then
-  endpoint="$CAPFIRE_HOST/deploys"
-  body=$(jq -nc --arg app "$app" --arg env "$env" --arg branch "$branch" \
-    '{app:$app, env:$env, branch:$branch}')
-else
-  endpoint="$CAPFIRE_HOST/commands"
-  body=$(jq -nc --arg app "$app" --arg env "$env" --arg cmd "$cmd" --arg branch "$branch" \
-    '{app:$app, env:$env, cmd:$cmd, branch:$branch}')
-fi
-
 # ANSI helpers
 C_CYAN=$'\033[36m'
 C_GREEN=$'\033[32m'
 C_RED=$'\033[31m'
+C_YELLOW=$'\033[33m'
 C_RESET=$'\033[0m'
 C_BOLD=$'\033[1m'
 
-printf '%sTriggering %s:%s @ %s on %s%s\n\n' "$C_BOLD" "$app" "$env" "$branch" "$cmd" "$C_RESET"
+# Build body + endpoint
+if [[ "$cmd" == "deploy" ]]; then
+  endpoint="$CAPFIRE_HOST/deploys"
+  body=$(jq -nc --arg app "$app" --arg env "$env" --arg branch "$branch" --argjson async "$async" \
+    '{app:$app, env:$env, branch:$branch, async:$async}')
+else
+  endpoint="$CAPFIRE_HOST/commands"
+  body=$(jq -nc --arg app "$app" --arg env "$env" --arg cmd "$cmd" --arg branch "$branch" --argjson async "$async" \
+    '{app:$app, env:$env, cmd:$cmd, branch:$branch, async:$async}')
+fi
 
-# The final `done` event tells us the exit code — we capture it to mirror it
-# as this script's exit status, so CI pipelines can fail correctly.
-exit_code=1
+mode_label="streaming"
+$async && mode_label="async"
+printf '%sTriggering %s:%s @ %s on %s (%s)%s\n\n' \
+  "$C_BOLD" "$app" "$env" "$branch" "$cmd" "$mode_label" "$C_RESET"
 
+# ---- Async mode: single request, parse JSON, exit ------------------------
+if $async; then
+  http_response=$(curl -sS -w '\nHTTP_STATUS:%{http_code}' -X POST "$endpoint" \
+    -H "Authorization: Bearer $CAPFIRE_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$body")
+  http_code="${http_response##*HTTP_STATUS:}"
+  http_body="${http_response%$'\n'HTTP_STATUS:*}"
+
+  case "$http_code" in
+    202)
+      deploy_id=$(echo "$http_body" | jq -r '.deploy_id // empty')
+      printf '%s✓ Queued as deploy #%s%s\n' "$C_GREEN" "$deploy_id" "$C_RESET"
+      printf 'Follow up: %sGET %s/deploys/%s%s\n' "$C_CYAN" "$CAPFIRE_HOST" "$deploy_id" "$C_RESET"
+      printf 'Slack will notify on completion if enabled.\n'
+      exit 0
+      ;;
+    409)
+      printf '%s✗ Conflict — another deploy is already in progress.%s\n' "$C_RED" "$C_RESET"
+      echo "$http_body" | jq -r '
+        "  active_deploy: #\(.active_deploy.id) (\(.active_deploy.command), \(.active_deploy.branch), \(.active_deploy.status))",
+        "  triggered_by : \(.active_deploy.triggered_by // "unknown")",
+        "  started_at   : \(.active_deploy.started_at // "unknown")",
+        "  retry in     : ~\(.retry_after_seconds // 600)s"
+      '
+      exit 4
+      ;;
+    *)
+      printf '%s✗ Unexpected response (HTTP %s):%s\n' "$C_RED" "$http_code" "$C_RESET"
+      echo "$http_body"
+      exit 1
+      ;;
+  esac
+fi
+
+# ---- Streaming mode: consume SSE until `done` event ----------------------
+exit_file=$(mktemp)
+trap 'rm -f "$exit_file"' EXIT
+
+# The final `done` event carries the exit code — we capture it through the
+# temp file so the loop's subshell doesn't lose it.
 curl -sN -X POST "$endpoint" \
   -H "Authorization: Bearer $CAPFIRE_TOKEN" \
   -H "Content-Type: application/json" \
@@ -80,10 +137,11 @@ curl -sN -X POST "$endpoint" \
     payload="${line#data: }"
     [[ -z "$payload" ]] && continue
 
-    # Decode the structured events into something human-readable.
     echo "$payload" | jq -rj '
       if .line then
         .line + "\n"
+      elif .error and .message then
+        "\u001b[31m✗ " + .message + "\u001b[0m\n"
       elif .message then
         "\u001b[36m→ " + .message + "\u001b[0m\n"
       elif .status then
@@ -94,20 +152,14 @@ curl -sN -X POST "$endpoint" \
       else
         empty
       end
-    '
+    ' 2>/dev/null
 
-    # If it was the terminal event, capture the exit code and stop reading.
-    status=$(echo "$payload" | jq -r '.status // empty')
-    if [[ -n "$status" ]]; then
-      ec=$(echo "$payload" | jq -r '.exit_code // 1')
-      echo "$ec" > /tmp/capfire_last_exit_$$
+    if echo "$payload" | jq -e '.status' >/dev/null 2>&1; then
+      echo "$payload" | jq -r '.exit_code // 1' > "$exit_file"
       break
     fi
 done
 
-if [[ -f /tmp/capfire_last_exit_$$ ]]; then
-  exit_code=$(cat /tmp/capfire_last_exit_$$)
-  rm -f /tmp/capfire_last_exit_$$
-fi
-
+exit_code=1
+[[ -f "$exit_file" ]] && exit_code=$(cat "$exit_file")
 exit "$exit_code"

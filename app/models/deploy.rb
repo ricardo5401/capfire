@@ -1,6 +1,7 @@
 class Deploy < ApplicationRecord
   STATUSES = %w[pending running success failed canceled].freeze
   COMMANDS = %w[deploy restart rollback status].freeze
+  ACTIVE_STATUSES = %w[pending running].freeze
 
   validates :app, :env, :branch, :command, :status, presence: true
   validates :status, inclusion: { in: STATUSES }
@@ -8,6 +9,8 @@ class Deploy < ApplicationRecord
 
   scope :recent, -> { order(created_at: :desc) }
   scope :running, -> { where(status: 'running') }
+  scope :active, -> { where(status: ACTIVE_STATUSES) }
+  scope :active_for, ->(app) { active.where(app: app) }
 
   def mark_running!(started_at: Time.current)
     update!(status: 'running', started_at: started_at)

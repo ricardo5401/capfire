@@ -653,6 +653,22 @@ curl -N -X POST https://$CAPFIRE_HOST/deploys \
 > imprime decodificados — los colores del bundler, cap, rsync aparecen tal
 > cual. El exit code del script refleja el del deploy, asi que funciona
 > tal cual en pipelines de CI. Requiere `jq`.
+>
+> **Modo async:** agregar `--async` al comando. Capfire acepta el deploy y
+> vuelve al instante con el `deploy_id`. Slack (si lo activaste) notifica
+> al terminar.
+>
+> ```bash
+> scripts/deploy udoczcom production master --async
+> # Triggering udoczcom:production @ master on deploy (async)
+> # ✓ Queued as deploy #42
+> # Follow up: GET https://capfire.udocz.com/deploys/42
+> # Slack will notify on completion if enabled.
+> ```
+>
+> **Exit codes:** `0` exitoso (o queued en async), `1` fallo de deploy,
+> `4` conflict (otro deploy ya en curso). Los `2`/`3` son usage y missing
+> deps respectivamente.
 
 **Body**
 
@@ -662,6 +678,60 @@ curl -N -X POST https://$CAPFIRE_HOST/deploys \
 | `env` | string | yes | -- | |
 | `branch` | string | no | `"main"` | |
 | `skip_lb` | bool | no | `false` | Cuando es `true`, NO drena el Load Balancer. Pensado para orquestadores externos que manejan el drain/restore ellos mismos via `/lb/drain` y `/lb/restore`. |
+| `async` | bool | no | `false` | Cuando es `true`, Capfire acepta el deploy, lo corre en un Thread en background y responde `202 Accepted` al instante con `deploy_id`. La respuesta es JSON, NO SSE. Ideal para deploys largos si no queres dejar la terminal abierta -- Slack notifica al terminar (si la app tiene `slack.enabled`). Podes chequear estado con `GET /deploys/:id`. |
+
+**Modo async — respuesta**
+
+```json
+{
+  "status": "accepted",
+  "deploy_id": 42,
+  "app": "udoczcom",
+  "env": "production",
+  "branch": "master",
+  "track_url": "https://capfire.udocz.com/deploys/42",
+  "message": "Deploy queued. Slack will notify on completion if enabled; poll the track_url for status."
+}
+```
+
+`track_url` apunta a `GET /deploys/:id`, usando `ENV['CAPFIRE_PUBLIC_URL']` si esta seteada
+(util si Capfire corre detras de un proxy que reescribe Host); si no, usa el `request.base_url`
+que ve Rails.
+
+**Conflicto — otro deploy ya en curso** (HTTP 409)
+
+Capfire permite solo un deploy activo (`pending` o `running`) **por app** (no por app+env). El
+scope es asi porque el cockpit es UN solo checkout de git: si estas desplegando udoczcom prod
+con branch `master` y alguien dispara udoczcom staging con branch `staging`, el segundo
+haria `git checkout staging` pisando el master del primero a mitad de deploy. Por eso el lock
+es a nivel app.
+
+Apps DISTINTAS (udoczcom vs udocz_api) corren en paralelo sin problema — cada una tiene su
+propio cockpit bajo `/srv/apps/<app>`.
+
+Respuesta 409:
+
+```json
+{
+  "error": "conflict",
+  "message": "another deploy is already in progress for app=udoczcom",
+  "active_deploy": {
+    "id": 41,
+    "command": "deploy",
+    "branch": "master",
+    "status": "running",
+    "triggered_by": "ricardo-admin",
+    "started_at": "2026-04-24T07:15:03Z"
+  },
+  "retry_after_seconds": 600
+}
+```
+
+**Deploys huerfanos tras crash de Capfire.** Un initializer
+(`config/initializers/orphan_deploys.rb`) corre al boot y marca como `failed` cualquier deploy
+que haya quedado en `running`/`pending`. Asume **single-worker** (ver `config/puma.rb`). No
+cambies Capfire a multi-worker sin repensar este mecanismo: con workers paralelos, un deploy
+"activo" podria pertenecer a otro worker y este initializer lo sabotearia.
 
 **Respuesta** (`Content-Type: text/event-stream`)
 

@@ -19,6 +19,19 @@
 # The block receives (event_name, payload_hash) where event_name is one of:
 #   :log, :info, :error, :done
 class DeployService
+  # Raised when another deploy/restart/rollback is already pending or running
+  # for the same app (across ALL envs — the cockpit is one git checkout, so
+  # parallel operations on staging + production would step on each other).
+  # Callers should translate this into HTTP 409.
+  class Busy < StandardError
+    attr_reader :active_deploy
+
+    def initialize(active_deploy)
+      @active_deploy = active_deploy
+      super("another deploy is already in progress for app=#{active_deploy.app}")
+    end
+  end
+
   attr_reader :deploy
 
   def initialize(app:, env:, branch:, command: 'deploy', triggered_by: nil, token_jti: nil,
@@ -41,9 +54,12 @@ class DeployService
     @lb_service = @lb_service_class.new(config: @lb_config)
   end
 
-  def call(&block)
-    @block = block
-    @deploy = Deploy.create!(
+  # Creates the Deploy record without running any work. Used for async mode
+  # so the HTTP response can return the deploy_id immediately while a
+  # background thread performs the actual deploy. Raises Busy if another
+  # active deploy exists for this app+env.
+  def enqueue
+    @deploy ||= Deploy.create!(
       app: @app,
       env: @env,
       branch: @branch,
@@ -52,6 +68,13 @@ class DeployService
       triggered_by: @triggered_by,
       token_jti: @token_jti
     )
+  rescue ActiveRecord::RecordNotUnique
+    raise Busy, Deploy.active_for(@app).first
+  end
+
+  def call(&block)
+    @block = block
+    enqueue
 
     emit(:info, deploy_id: @deploy.id, app: @app, env: @env, branch: @branch, command: @command,
                 message: "starting #{@command} #{@app}@#{@branch} -> #{@env}")
@@ -64,6 +87,10 @@ class DeployService
     emit(:done, deploy_id: @deploy.id, exit_code: exit_code, status: @deploy.status)
     notify_slack(success: exit_code.zero?, reason: exit_code.zero? ? nil : "exit code #{exit_code}")
     @deploy
+  rescue Busy
+    # Concurrency conflict — no deploy record was created by us, nothing to
+    # clean up. Let the controller convert this into HTTP 409.
+    raise
   rescue StandardError => e
     @logger.error("[deploy] #{e.class}: #{e.message}\n#{e.backtrace&.first(5)&.join("\n")}")
     emit(:error, message: "#{e.class}: #{e.message}")
