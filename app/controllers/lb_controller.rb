@@ -46,7 +46,7 @@ class LbController < ApplicationController
   def require_app_and_env!
     params.require(:app)
     params.require(:env)
-    [params[:app], params[:env]]
+    [ params[:app], params[:env] ]
   end
 
   # Returns [service, config] when ready, or renders an error and returns nil.
@@ -59,7 +59,7 @@ class LbController < ApplicationController
       return render_not_configured('load_balancer block is incomplete (pool_id, origin, CF_API_TOKEN)')
     end
 
-    [service, config]
+    [ service, config ]
   end
 
   def render_not_configured(message)

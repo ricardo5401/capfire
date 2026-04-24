@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class CreateRevokedTokens < ActiveRecord::Migration[7.1]
   def change
     create_table :revoked_tokens do |t|

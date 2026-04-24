@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 class ApiToken < ApplicationRecord
   validates :jti, :name, presence: true
   validates :jti, uniqueness: true

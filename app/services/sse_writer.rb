@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'json'
 
 # Thin wrapper around a Rails streaming response that formats Server-Sent Events.
@@ -13,7 +15,7 @@ require 'json'
 # don't trip idle-connection timeouts at nginx / Cloudflare / corporate
 # proxies. The heartbeat thread dies cleanly when `close` is called.
 class SseWriter
-  HEARTBEAT_COMMENT = ": keep-alive\n\n".freeze
+  HEARTBEAT_COMMENT = ": keep-alive\n\n"
   HEARTBEAT_INTERVAL = 15 # seconds
 
   def initialize(stream)

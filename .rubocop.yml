@@ -1,0 +1,40 @@
+# Capfire RuboCop configuration.
+#
+# Inherits from rubocop-rails-omakase (the Rails team curated ruleset) and
+# applies two project-specific overrides:
+#
+#   1. Strings: AGENTS.md mandates single quotes unless interpolation is
+#      needed. Omakase enforces double quotes — we flip it.
+#   2. Frozen string literals: every .rb file must declare
+#      `# frozen_string_literal: true`. Reduces allocations and catches
+#      accidental string mutation across the codebase.
+inherit_gem:
+  rubocop-rails-omakase: rubocop.yml
+
+AllCops:
+  NewCops: disable
+  SuggestExtensions: false
+  TargetRubyVersion: 3.2
+  Exclude:
+    - 'bin/**/*'
+    - 'db/schema.rb'
+    - 'node_modules/**/*'
+    - 'tmp/**/*'
+    - 'log/**/*'
+    - 'vendor/**/*'
+
+# Project style: single quotes unless interpolation is needed.
+Style/StringLiterals:
+  Enabled: true
+  EnforcedStyle: single_quotes
+  ConsistentQuotesInMultiline: true
+
+Style/StringLiteralsInInterpolation:
+  Enabled: true
+  EnforcedStyle: single_quotes
+
+# Every Ruby file must opt into frozen string literals.
+Style/FrozenStringLiteralComment:
+  Enabled: true
+  EnforcedStyle: always
+  SafeAutoCorrect: true

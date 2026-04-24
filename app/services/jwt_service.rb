@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'jwt'
 require 'securerandom'
 
@@ -20,7 +22,7 @@ class JwtService
   class ExpiredToken < Error; end
   class Unauthorized < Error; end
 
-  WILDCARD = '*'.freeze
+  WILDCARD = '*'
 
   class << self
     def encode(name:, apps:, envs:, cmds:, expires_at: nil, jti: SecureRandom.uuid, issued_at: Time.current)
@@ -35,14 +37,14 @@ class JwtService
       payload[:exp] = expires_at.to_i if expires_at
 
       token = ::JWT.encode(payload, secret, algorithm)
-      [token, payload.with_indifferent_access]
+      [ token, payload.with_indifferent_access ]
     end
 
     # Returns a validated claims hash (with indifferent access) or raises.
     def decode!(token)
       raise InvalidToken, 'missing token' if token.blank?
 
-      payload, _ = ::JWT.decode(token, secret, true, algorithms: [algorithm])
+      payload, _ = ::JWT.decode(token, secret, true, algorithms: [ algorithm ])
       claims = payload.with_indifferent_access
 
       raise RevokedToken, 'token is revoked' if claims[:jti] && ::RevokedToken.revoked?(claims[:jti])

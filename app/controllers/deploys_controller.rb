@@ -14,6 +14,10 @@
 # `app+env`. A second concurrent POST returns 409 Conflict with info about
 # the in-flight deploy.
 class DeploysController < ApplicationController
+  include Runnable
+
+  SUBSYSTEM = 'deploys#create'
+
   def create
     params.require(:app)
     params.require(:env)
@@ -25,17 +29,12 @@ class DeploysController < ApplicationController
 
     authorize_action!(app: app, env: env, cmd: 'deploy')
 
-    service = DeployService.new(
-      app: app, env: env, branch: branch,
-      command: 'deploy', skip_lb: skip_lb,
-      triggered_by: current_claims[:sub],
-      token_jti: current_claims[:jti]
-    )
+    service = build_service(app: app, env: env, branch: branch, skip_lb: skip_lb)
 
     if async
-      run_async(service, app: app, env: env, branch: branch)
+      run_async(service, subsystem: SUBSYSTEM, extra: async_payload(app, env, branch))
     else
-      run_streaming(service)
+      run_streaming(service, subsystem: SUBSYSTEM)
     end
   rescue DeployService::Busy => e
     render_busy(e.active_deploy)
@@ -51,77 +50,21 @@ class DeploysController < ApplicationController
 
   private
 
-  # Streams the deploy over SSE (original behavior).
-  def run_streaming(service)
-    prepare_sse_response!
-    sse = SseWriter.new(response.stream)
-
-    begin
-      service.call { |event, payload| sse.event(event, payload) }
-    rescue DeployService::Busy
-      # Can't emit the 409 over SSE (headers already sent). Surface as an
-      # error event and close. The terminal `done` with status failed means
-      # tooling treats it as a failed deploy.
-      sse.event(:error, message: 'deploy already in progress for this app+env')
-      sse.event(:done, exit_code: 1, status: 'failed', error: 'busy')
-    rescue StandardError => e
-      Rails.logger.error("[deploys#create] #{e.class}: #{e.message}")
-      sse.event(:error, message: "#{e.class}: #{e.message}")
-      sse.event(:done, exit_code: 1, status: 'failed', error: e.message)
-    ensure
-      sse.close
-    end
+  def build_service(app:, env:, branch:, skip_lb:)
+    DeployService.new(
+      app: app, env: env, branch: branch,
+      command: 'deploy', skip_lb: skip_lb,
+      triggered_by: current_claims[:sub],
+      token_jti: current_claims[:jti]
+    )
   end
 
-  # Fires the deploy in a background thread and returns 202 immediately.
-  def run_async(service, app:, env:, branch:)
-    deploy = service.enqueue
-    spawn_background_deploy(service)
-
-    render(json: {
-             status: 'accepted',
-             deploy_id: deploy.id,
-             app: app,
-             env: env,
-             branch: branch,
-             track_url: tracking_url(deploy.id),
-             message: 'Deploy queued. Slack will notify on completion if enabled; poll the track_url for status.'
-           }, status: :accepted)
-  end
-
-  # Builds the public URL clients can poll to check deploy status. Respects
-  # CAPFIRE_PUBLIC_URL if set (useful when Capfire runs behind a proxy that
-  # rewrites Host headers); falls back to request.base_url otherwise.
-  def tracking_url(deploy_id)
-    base = ENV['CAPFIRE_PUBLIC_URL'].presence || request.base_url
-    "#{base.sub(%r{/$}, '')}/deploys/#{deploy_id}"
-  end
-
-  # Runs the deploy in a separate thread with its own DB connection. Events
-  # are dropped (no subscriber); logs still persist to the Deploy record.
-  def spawn_background_deploy(service)
-    Thread.new do
-      ActiveRecord::Base.connection_pool.with_connection do
-        service.call { |_event, _payload| } # swallow SSE events in async mode
-      end
-    rescue StandardError => e
-      Rails.logger.error("[async-deploy] #{e.class}: #{e.message}")
-    end
-  end
-
-  def render_busy(active_deploy)
-    render(json: {
-             error: 'conflict',
-             message: "another deploy is already in progress for #{active_deploy.app}:#{active_deploy.env}",
-             active_deploy: {
-               id: active_deploy.id,
-               command: active_deploy.command,
-               branch: active_deploy.branch,
-               status: active_deploy.status,
-               triggered_by: active_deploy.triggered_by,
-               started_at: active_deploy.started_at
-             },
-             retry_after_seconds: 600
-           }, status: :conflict)
+  def async_payload(app, env, branch)
+    {
+      app: app,
+      env: env,
+      branch: branch,
+      message: 'Deploy queued. Slack will notify on completion if enabled; poll the track_url for status.'
+    }
   end
 end

@@ -15,7 +15,6 @@ require 'json'
 # multi-tenant Capfire nodes honest.
 class CloudflareLbService
   class Error < StandardError; end
-  class NotConfigured < Error; end
   class OriginNotFound < Error; end
   class ApiError < Error; end
 
@@ -89,7 +88,7 @@ class CloudflareLbService
   def parse!(response)
     body = JSON.parse(response.body.to_s.presence || '{}')
     unless response.success? && body['success']
-      errors = body['errors'] || [{ 'message' => "HTTP #{response.status}" }]
+      errors = body['errors'] || [ { 'message' => "HTTP #{response.status}" } ]
       raise ApiError, "cloudflare api error: #{errors.map { |e| e['message'] }.join('; ')}"
     end
     body
@@ -100,7 +99,7 @@ class CloudflareLbService
   def connection
     @connection ||= Faraday.new(url: API_BASE) do |f|
       f.request :retry, max: 3, interval: 0.5, backoff_factor: 2,
-                        exceptions: [Faraday::TimeoutError, Faraday::ConnectionFailed]
+                        exceptions: [ Faraday::TimeoutError, Faraday::ConnectionFailed ]
       f.headers['Authorization'] = "Bearer #{@config.api_token}"
       f.headers['Accept'] = 'application/json'
       f.options.timeout = 10

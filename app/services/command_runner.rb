@@ -120,6 +120,6 @@ class CommandRunner
   def safe_wait(pid)
     Process.wait2(pid)
   rescue Errno::ECHILD
-    [nil, nil]
+    [ nil, nil ]
   end
 end

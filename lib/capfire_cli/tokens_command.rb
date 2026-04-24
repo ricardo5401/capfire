@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module CapfireCli
   # `bin/capfire token create|list|revoke` subcommands.
   class TokensCommand < Thor

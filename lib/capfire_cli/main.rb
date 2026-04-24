@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module CapfireCli
   class Main < Thor
     desc 'token SUBCOMMAND ...ARGS', 'Manage API tokens'
@@ -6,7 +8,7 @@ module CapfireCli
     desc 'version', 'Print Capfire version'
     def version
       puts "capfire #{Capfire::VERSION}" if defined?(Capfire::VERSION)
-      puts "capfire unknown-version" unless defined?(Capfire::VERSION)
+      puts 'capfire unknown-version' unless defined?(Capfire::VERSION)
     end
 
     def self.exit_on_failure?

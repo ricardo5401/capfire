@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # Puma config tuned for SSE streaming.
 # Single worker, multiple threads — avoids buffering issues across workers.
 

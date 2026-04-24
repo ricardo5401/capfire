@@ -1,3 +1,8 @@
+# frozen_string_literal: true
+
+# Base controller. Every request is authenticated via JWT (bearer token) and
+# authorized per-action via `authorize_action!`. Streaming responses prepare
+# headers through `prepare_sse_response!`.
 class ApplicationController < ActionController::API
   include ActionController::Live
 

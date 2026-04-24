@@ -1,3 +1,10 @@
+# frozen_string_literal: true
+
+# Persists the lifecycle of a deploy/restart/rollback/status run.
+#
+# Uniqueness index on `app` for rows in ('pending','running') enforces that
+# only one active operation exists per app at a time (see migrations). That's
+# the DB-level half of the concurrency lock used by `DeployService`.
 class Deploy < ApplicationRecord
   STATUSES = %w[pending running success failed canceled].freeze
   COMMANDS = %w[deploy restart rollback status].freeze
@@ -23,7 +30,7 @@ class Deploy < ApplicationRecord
 
   def append_log!(chunk)
     # Appends a log chunk without rewriting the whole column from Ruby on every line.
-    sql = self.class.sanitize_sql_array(['log = COALESCE(log, ?) || ?', '', chunk])
+    sql = self.class.sanitize_sql_array([ 'log = COALESCE(log, ?) || ?', '', chunk ])
     self.class.where(id: id).update_all(sql)
     self.log = "#{log}#{chunk}"
   end
