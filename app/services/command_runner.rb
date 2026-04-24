@@ -52,19 +52,23 @@ class CommandRunner
     raise AppNotFound, "working directory not found for app=#{app}: #{work_dir}"
   end
 
-  # Prepends a `git fetch + checkout + reset --hard` step when applicable so
-  # the cockpit is always on the exact commit requested before the real deploy
-  # command runs. The sync is skipped for restart/rollback/status (those don't
-  # need fresh code) and when the app opts out via `git_sync: false`.
+  # Builds the final shell command to run, prepending (for `deploy` only):
+  #   1. Git sync: `fetch + checkout + reset --hard` against `origin/<branch>`.
+  #      Opt out via `git_sync: false` in capfire.yml.
+  #   2. Pre-deploy hooks: shell commands from `pre_deploy:` in capfire.yml,
+  #      chained with `&&`. Typical uses: `bundle install`, `yarn install`.
+  #
+  # Restart/rollback/status skip both steps — they don't need fresh code or
+  # refreshed dependencies.
   def build_full_command
     base = @app_config.command_for(command: command, env: env, branch: branch)
-    return base unless sync_git?
+    return base unless command == 'deploy'
 
-    "#{git_sync_command} && #{base}"
-  end
-
-  def sync_git?
-    command == 'deploy' && @app_config.git_sync?
+    steps = []
+    steps << git_sync_command if @app_config.git_sync?
+    steps.concat(@app_config.pre_deploy_commands)
+    steps << base
+    steps.join(' && ')
   end
 
   def git_sync_command

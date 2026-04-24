@@ -35,6 +35,11 @@ require 'yaml'
 #                              # Default: true. Only applies to the `deploy`
 #                              # command; restart/rollback/status never sync.
 #
+#   pre_deploy:                # shell commands run BEFORE the deploy command.
+#     - "bundle install"       # Only applies to `deploy` (not restart/etc).
+#     - "yarn install"         # Runs after git_sync, chained with `&&`, so
+#                              # any failure aborts the deploy.
+#
 # Placeholders supported inside any command string:
 #   %{app}    -> app slug passed to /deploys or /commands
 #   %{env}    -> env name (production, staging, ...)
@@ -81,6 +86,18 @@ class AppConfig
     return true if value.nil?
 
     !!value
+  end
+
+  # Returns an array of shell command strings to run before the `deploy`
+  # command, in order. Typically `bundle install`, `yarn install`, or similar
+  # dependency-refresh steps that should run after the git sync brings new
+  # Gemfile.lock / package.json but before the actual deploy.
+  def pre_deploy_commands
+    raw = @yaml['pre_deploy']
+    return [] if raw.blank?
+    raise InvalidConfig, 'pre_deploy must be an array of strings' unless raw.is_a?(Array)
+
+    raw.map(&:to_s).reject(&:empty?)
   end
 
   # Returns a LoadBalancerConfig for the given env, or nil when the app+env

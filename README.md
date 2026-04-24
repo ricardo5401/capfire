@@ -102,8 +102,12 @@ CAPFIRE_APPS_ROOT=/srv/apps
 git clone git@github.com:uDocz/capfire.git /opt/capfire
 cd /opt/capfire
 
-# 2. Instalar dependencias
-bundle install --deployment --without development test
+# 2. Configurar Bundler para instalar a vendor/bundle y excluir grupos dev/test.
+#    Son 2 comandos separados en vez de `--deployment --without dev test` porque
+#    los flags CLI estan deprecados/rompen facil en Bundler 2.x.
+bundle config set --local deployment 'true'
+bundle config set --local without 'development:test'
+bundle install --jobs 4 --retry 2
 
 # 3. Configurar entorno
 cp .env.example .env
@@ -146,6 +150,30 @@ Queda persistente entre deploys.
 Alternativa si no queres colocar el archivo: exportar `SECRET_KEY_BASE` en el `.env` de Capfire.
 Pero el archivo es mas robusto porque las apps a veces leen otras credenciales (API keys,
 secret tokens) que estan en `credentials.yml.enc` y requieren la `master.key` para leerse.
+
+### Bundler config del cockpit (una vez por app)
+
+Si tu `capfire.yml` tiene un `pre_deploy` que corre `bundle install`, configura Bundler una
+unica vez en cada cockpit para que las corridas siguientes sean limpias:
+
+```bash
+# En /srv/apps/udoczcom, /srv/apps/udocz_api, /srv/apps/udocz-institutions
+for app in udoczcom udocz_api udocz-institutions; do
+  cd /srv/apps/$app
+  bundle config set --local deployment 'true'
+  bundle config set --local without 'development:test'
+  bundle install --jobs 4 --retry 2
+  yarn install --frozen-lockfile
+done
+```
+
+Queda persistido en `.bundle/config` de cada cockpit. Despues de eso, el `bundle install` del
+`pre_deploy` reutiliza esa config y solo instala lo que falta.
+
+> **No uses `--deployment --without development test` como flags inline** en el `pre_deploy` ni
+> en el setup. En Bundler 2.x esos flags estan deprecados, exigen que `Gemfile.lock` y `Gemfile`
+> esten 100% sincronizados, y fallan duro si hay la mas minima inconsistencia. Usar
+> `bundle config set` una sola vez es mas robusto.
 
 ### Ejemplo de unidad systemd
 
@@ -378,6 +406,12 @@ environments:
 
 # Opcional: desactivar el git sync automatico (default: true).
 # git_sync: false
+
+# Opcional: comandos a correr ANTES del deploy (despues del git sync).
+# Tipico para refrescar dependencias cuando Gemfile.lock / package.json cambian.
+pre_deploy:
+  - "bundle install --jobs 4 --retry 2"
+  - "yarn install --frozen-lockfile"
 ```
 
 **Git sync automatico.** Antes de correr el comando de `deploy`, Capfire ejecuta en el
@@ -397,6 +431,19 @@ globalmente por app poniendo `git_sync: false` en el `capfire.yml`.
 > Nota para despliegues por tag: `git reset --hard origin/<ref>` asume que `<ref>` es una rama.
 > Si necesitas desplegar tags frecuentemente, desactiva `git_sync` y hace el checkout manualmente
 > dentro del comando de `deploy`.
+
+**Pre-deploy hooks.** Despues del git sync y antes del comando de `deploy`, Capfire ejecuta los
+comandos listados en `pre_deploy:` en orden. Se chainean con `&&`, asi que si cualquiera falla
+el deploy se aborta. **Solo aplica al comando `deploy`** -- restart/rollback/status no corren
+los hooks.
+
+Uso tipico:
+- Refrescar gems cuando `Gemfile.lock` cambio: `bundle install`
+- Refrescar node_modules cuando `package.json` o `yarn.lock` cambiaron: `yarn install`
+- Cualquier otra preparacion (migraciones de datos locales, generacion de archivos, etc).
+
+Si no necesitas nada de esto (apps cuyo comando de `deploy` ya maneja dependencias, apps
+no-Ruby), omiti la key `pre_deploy`.
 
 **Defaults (aplican cuando `capfire.yml` no existe o no declara un comando):**
 
