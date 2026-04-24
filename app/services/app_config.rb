@@ -30,6 +30,11 @@ require 'yaml'
 #       load_balancer:
 #         enabled: false
 #
+#   git_sync: false            # opt out of the auto `git fetch + checkout +
+#                              # reset --hard` that runs before every deploy.
+#                              # Default: true. Only applies to the `deploy`
+#                              # command; restart/rollback/status never sync.
+#
 # Placeholders supported inside any command string:
 #   %{app}    -> app slug passed to /deploys or /commands
 #   %{env}    -> env name (production, staging, ...)
@@ -64,6 +69,18 @@ class AppConfig
     raise UnknownCommand, "unknown command: #{command}" if template.blank?
 
     format_template(template, env: env, branch: branch)
+  end
+
+  # Whether Capfire should auto-sync the work_dir with `origin/<branch>` before
+  # running a `deploy` command. Defaults to true; opt out per-app via
+  # `git_sync: false` in capfire.yml (useful for non-git apps or when the
+  # deploy tool handles its own checkout).
+  def git_sync?
+    value = @yaml['git_sync']
+    # Treat missing/nil as enabled; any explicit `false` disables it.
+    return true if value.nil?
+
+    !!value
   end
 
   # Returns a LoadBalancerConfig for the given env, or nil when the app+env

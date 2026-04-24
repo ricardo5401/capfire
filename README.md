@@ -119,6 +119,34 @@ bundle exec rails secret
 RAILS_ENV=production bundle exec puma -C config/puma.rb
 ```
 
+### Credenciales de las apps para el precompile local
+
+Muchas apps (incluidas udoczcom, udocz_api y udocz-institutions) **precompilan assets
+localmente en el cockpit antes de hacer rsync a los servers target**. Eso significa que Rails
+bootea en modo `production` DENTRO del server de Capfire, lo cual requiere desencriptar
+`config/credentials.yml.enc` -- y eso requiere `config/master.key`.
+
+Por eso, para cada app que hace precompile local, necesitas colocar el `master.key` en el
+cockpit **una sola vez durante el setup**:
+
+```bash
+# En el server de Capfire, una vez por app:
+scp laptop:~/proyectos/udoczcom/config/master.key            /srv/apps/udoczcom/config/master.key
+scp laptop:~/proyectos/udocz_api/config/master.key           /srv/apps/udocz_api/config/master.key
+scp laptop:~/proyectos/udocz-institutions/config/master.key  /srv/apps/udocz-institutions/config/master.key
+
+# Permisos restrictivos
+chmod 600 /srv/apps/*/config/master.key
+chown deploy:deploy /srv/apps/*/config/master.key
+```
+
+`master.key` esta gitignored, por lo que el `git reset --hard` del auto-sync NO lo borra.
+Queda persistente entre deploys.
+
+Alternativa si no queres colocar el archivo: exportar `SECRET_KEY_BASE` en el `.env` de Capfire.
+Pero el archivo es mas robusto porque las apps a veces leen otras credenciales (API keys,
+secret tokens) que estan en `credentials.yml.enc` y requieren la `master.key` para leerse.
+
 ### Ejemplo de unidad systemd
 
 ```ini
@@ -343,7 +371,28 @@ environments:
   staging:
     load_balancer:
       enabled: false    # explicito; tambien es el default si falta el bloque
+
+# Opcional: desactivar el git sync automatico (default: true).
+# git_sync: false
 ```
+
+**Git sync automatico.** Antes de correr el comando de `deploy`, Capfire ejecuta en el
+`work_dir`:
+
+```
+git fetch --prune origin
+git checkout <branch>
+git reset --hard origin/<branch>
+```
+
+Esto garantiza que el cockpit siempre este en el commit exacto que pediste desplegar (importante
+cuando la app hace precompile local de assets desde el cockpit, como udoczcom). El sync se salta
+para `restart`, `rollback` y `status` porque esos no necesitan codigo fresco. Podes desactivarlo
+globalmente por app poniendo `git_sync: false` en el `capfire.yml`.
+
+> Nota para despliegues por tag: `git reset --hard origin/<ref>` asume que `<ref>` es una rama.
+> Si necesitas desplegar tags frecuentemente, desactiva `git_sync` y hace el checkout manualmente
+> dentro del comando de `deploy`.
 
 **Defaults (aplican cuando `capfire.yml` no existe o no declara un comando):**
 

@@ -35,7 +35,7 @@ class CommandRunner
   # Yields each raw line (without trailing newline) and returns the process exit code.
   def run(&block)
     ensure_work_dir!
-    command_string = @app_config.command_for(command: command, env: env, branch: branch)
+    command_string = build_full_command
 
     Rails.logger.info("[runner] cd #{work_dir} && #{command_string}")
 
@@ -50,6 +50,30 @@ class CommandRunner
     return if File.directory?(work_dir)
 
     raise AppNotFound, "working directory not found for app=#{app}: #{work_dir}"
+  end
+
+  # Prepends a `git fetch + checkout + reset --hard` step when applicable so
+  # the cockpit is always on the exact commit requested before the real deploy
+  # command runs. The sync is skipped for restart/rollback/status (those don't
+  # need fresh code) and when the app opts out via `git_sync: false`.
+  def build_full_command
+    base = @app_config.command_for(command: command, env: env, branch: branch)
+    return base unless sync_git?
+
+    "#{git_sync_command} && #{base}"
+  end
+
+  def sync_git?
+    command == 'deploy' && @app_config.git_sync?
+  end
+
+  def git_sync_command
+    ref = branch.to_s.shellescape
+    [
+      'git fetch --prune origin',
+      "git checkout #{ref}",
+      "git reset --hard origin/#{ref}"
+    ].join(' && ')
   end
 
   # Uses `sh -c` so custom `capfire.yml` commands can include pipes, env vars,

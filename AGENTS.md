@@ -49,12 +49,26 @@ environments:
   staging:
     load_balancer:
       enabled: false
+
+git_sync: false              # opt out of auto git sync (default: true)
 ```
 
 Placeholders in command strings: `%{app}`, `%{env}`, `%{branch}`.
 
 If a key is missing, the default from `AppConfig::DEFAULT_COMMANDS` applies. Apps without a
 `capfire.yml` keep behaving exactly like a vanilla Capistrano deploy — no migration required.
+
+### Auto git sync
+
+Before running a `deploy` command, `CommandRunner` prepends:
+
+```
+git fetch --prune origin && git checkout <branch> && git reset --hard origin/<branch>
+```
+
+This ensures the cockpit is on the exact commit being deployed (matters for apps that do
+local asset precompile from the cockpit). Skipped for `restart`, `rollback`, `status`. Opt out
+per-app via `git_sync: false` in `capfire.yml`.
 
 ## Style
 
