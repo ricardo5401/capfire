@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# deploy — pretty SSE client for Capfire's /deploys and /commands endpoints.
+#
+# Capfire streams events as Server-Sent Events (JSON-wrapped), which is great
+# for programmatic consumers but ugly on a terminal: ANSI color codes arrive
+# escaped inside JSON strings so the shell can't render them. This wrapper
+# parses each SSE line, extracts the log/message/done payload, and prints it
+# with ANSI codes decoded — matching how `cap deploy` looks when run locally.
+#
+# Requires: curl, jq.
+#
+# Environment:
+#   CAPFIRE_HOST   e.g. https://capfire.udocz.com
+#   CAPFIRE_TOKEN  JWT issued by `bin/capfire token create`
+#
+# Usage:
+#   scripts/deploy <app> <env> [branch]
+#   scripts/deploy <app> <env> [branch] --cmd=restart|rollback|status
+#
+# Examples:
+#   scripts/deploy udoczcom production master
+#   scripts/deploy udocz_api staging RELEASE
+#   scripts/deploy udoczcom production master --cmd=restart
+
+set -euo pipefail
+
+app="${1:-}"
+env="${2:-}"
+branch="${3:-main}"
+cmd="deploy"
+
+# Parse optional --cmd=... flag (can be the 3rd or 4th arg)
+for arg in "$@"; do
+  case "$arg" in
+    --cmd=*) cmd="${arg#--cmd=}" ;;
+  esac
+done
+
+if [[ -z "$app" || -z "$env" ]]; then
+  echo "usage: $0 <app> <env> [branch] [--cmd=deploy|restart|rollback|status]" >&2
+  exit 2
+fi
+
+: "${CAPFIRE_HOST:?CAPFIRE_HOST is not set}"
+: "${CAPFIRE_TOKEN:?CAPFIRE_TOKEN is not set}"
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "error: jq is required (apt install jq / brew install jq)" >&2
+  exit 3
+fi
+
+if [[ "$cmd" == "deploy" ]]; then
+  endpoint="$CAPFIRE_HOST/deploys"
+  body=$(jq -nc --arg app "$app" --arg env "$env" --arg branch "$branch" \
+    '{app:$app, env:$env, branch:$branch}')
+else
+  endpoint="$CAPFIRE_HOST/commands"
+  body=$(jq -nc --arg app "$app" --arg env "$env" --arg cmd "$cmd" --arg branch "$branch" \
+    '{app:$app, env:$env, cmd:$cmd, branch:$branch}')
+fi
+
+# ANSI helpers
+C_CYAN=$'\033[36m'
+C_GREEN=$'\033[32m'
+C_RED=$'\033[31m'
+C_RESET=$'\033[0m'
+C_BOLD=$'\033[1m'
+
+printf '%sTriggering %s:%s @ %s on %s%s\n\n' "$C_BOLD" "$app" "$env" "$branch" "$cmd" "$C_RESET"
+
+# The final `done` event tells us the exit code — we capture it to mirror it
+# as this script's exit status, so CI pipelines can fail correctly.
+exit_code=1
+
+curl -sN -X POST "$endpoint" \
+  -H "Authorization: Bearer $CAPFIRE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$body" | while IFS= read -r line; do
+    [[ "$line" != data:* ]] && continue
+    payload="${line#data: }"
+    [[ -z "$payload" ]] && continue
+
+    # Decode the structured events into something human-readable.
+    echo "$payload" | jq -rj '
+      if .line then
+        .line + "\n"
+      elif .message then
+        "\u001b[36m→ " + .message + "\u001b[0m\n"
+      elif .status then
+        (if (.exit_code // 1) == 0
+          then "\n\u001b[32m✓ Deploy completed (exit " + ((.exit_code // 0) | tostring) + ")\u001b[0m\n"
+          else "\n\u001b[31m✗ Deploy failed (exit " + ((.exit_code // 1) | tostring) + ")\u001b[0m\n"
+        end)
+      else
+        empty
+      end
+    '
+
+    # If it was the terminal event, capture the exit code and stop reading.
+    status=$(echo "$payload" | jq -r '.status // empty')
+    if [[ -n "$status" ]]; then
+      ec=$(echo "$payload" | jq -r '.exit_code // 1')
+      echo "$ec" > /tmp/capfire_last_exit_$$
+      break
+    fi
+done
+
+if [[ -f /tmp/capfire_last_exit_$$ ]]; then
+  exit_code=$(cat /tmp/capfire_last_exit_$$)
+  rm -f /tmp/capfire_last_exit_$$
+fi
+
+exit "$exit_code"

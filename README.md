@@ -605,6 +605,25 @@ curl -N -X POST https://$CAPFIRE_HOST/deploys \
 
 > `-N` desactiva el buffer de curl -- necesario para ver el SSE en tiempo real.
 
+> **Nota sobre el output en terminal**: el SSE crudo se ve feo porque los
+> codigos ANSI (colores de cap/bundler) viajan escapados dentro de los JSON
+> de cada evento (`\u001b[33m...`). El terminal ve literalmente los
+> caracteres, no la secuencia ESC. Para ver el streaming formateado igual
+> que `cap deploy` local, usa el wrapper `scripts/deploy`:
+>
+> ```bash
+> export CAPFIRE_HOST=https://capfire.udocz.com
+> export CAPFIRE_TOKEN=eyJhbGciOi...
+> scripts/deploy udoczcom production master
+> # o para un restart:
+> scripts/deploy udoczcom production master --cmd=restart
+> ```
+>
+> El script parsea cada evento SSE, extrae `line`/`message`/`status` y los
+> imprime decodificados — los colores del bundler, cap, rsync aparecen tal
+> cual. El exit code del script refleja el del deploy, asi que funciona
+> tal cual en pipelines de CI. Requiere `jq`.
+
 **Body**
 
 | Campo | Tipo | Requerido | Default | Notas |
