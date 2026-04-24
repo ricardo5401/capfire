@@ -199,16 +199,20 @@ cd /opt/capfire
 RAILS_ENV=production bundle exec bin/capfire <comando>
 ```
 
+> **Sintaxis Thor.** El CLI usa **espacios** entre el grupo (`token`) y la accion
+> (`list`, `create`, `revoke`), no dos puntos estilo Rake. Por ejemplo:
+> `bin/capfire token list` (correcto), `bin/capfire token:list` (NO funciona).
+
 ### Crear tokens
 
 #### Token de administracion total
 
 ```bash
-bin/capfire token:create \
+bin/capfire token create \
   --name=admin \
   --apps='*' \
   --envs=staging,production \
-  --cmds=deploy,restart,rollback,status
+  --cmds=deploy,restart,rollback,status,drain,restore
 ```
 
 Guarda el JWT que se imprime. Capfire **no lo volvera a mostrar**.
@@ -216,7 +220,7 @@ Guarda el JWT que se imprime. Capfire **no lo volvera a mostrar**.
 #### Token restringido para GitHub Actions
 
 ```bash
-bin/capfire token:create \
+bin/capfire token create \
   --name=github-actions \
   --apps=udoczcom \
   --envs=staging \
@@ -226,7 +230,7 @@ bin/capfire token:create \
 #### Token con expiracion
 
 ```bash
-bin/capfire token:create \
+bin/capfire token create \
   --name=one-shot \
   --apps=udoczcom \
   --envs=staging \
@@ -239,7 +243,7 @@ Unidades soportadas en `--expires-in`: `s`, `m`, `h`, `d`.
 ### Listar tokens
 
 ```bash
-bin/capfire token:list
+bin/capfire token list
 ```
 
 Muestra id, nombre, jti, claims y estado (`active` / `REVOKED`).
@@ -247,9 +251,9 @@ Muestra id, nombre, jti, claims y estado (`active` / `REVOKED`).
 ### Revocar un token
 
 ```bash
-bin/capfire token:revoke 3                        # por id
-bin/capfire token:revoke a7b3c0f2-...-...         # por jti
-bin/capfire token:revoke 3 --reason="leaked in slack"
+bin/capfire token revoke 3                        # por id
+bin/capfire token revoke a7b3c0f2-...-...         # por jti
+bin/capfire token revoke 3 --reason="leaked in slack"
 ```
 
 La revocacion es doble: marca `api_tokens.revoked_at` e inserta en `revoked_tokens`, por lo
@@ -432,7 +436,7 @@ La variable es el slug de la app en mayusculas con caracteres no alfanumericos r
 ### 6. Crear un token para la nueva app
 
 ```bash
-bin/capfire token:create \
+bin/capfire token create \
   --name=udocz-bot-ci \
   --apps=udocz_bot \
   --envs=staging,production \
@@ -709,21 +713,21 @@ Configura estos secrets en **Settings > Secrets and variables > Actions**:
 
 | Secret | Descripcion |
 |--------|-------------|
-| `CAPFIRE_TOKEN` | JWT emitido con `token:create` |
+| `CAPFIRE_TOKEN` | JWT emitido con `token create` |
 | `CAPFIRE_HOST` | URL base del nodo Capfire (ej. `https://deploy.internal.udocz.com`) |
 
 ### Token recomendado para Actions
 
 ```bash
 # Solo puede hacer deploy de udoczcom en staging
-bin/capfire token:create \
+bin/capfire token create \
   --name=github-actions-staging \
   --apps=udoczcom \
   --envs=staging \
   --cmds=deploy
 
 # Para produccion (workflow separado con environment protection rules)
-bin/capfire token:create \
+bin/capfire token create \
   --name=github-actions-production \
   --apps=udoczcom \
   --envs=production \
@@ -743,7 +747,7 @@ Los tokens de Capfire no son strings opacos -- son JWTs con permisos explicitos 
   (`apps`, `envs`, `cmds`). Un token de CI para staging no puede tocar produccion aunque lo
   intercepten.
 - **Revocacion individual**: comprometer un token no obliga a rotar el secreto global y
-  reinvalidar todos los demas tokens. `token:revoke` es suficiente.
+  reinvalidar todos los demas tokens. `token revoke` es suficiente.
 - **Audit trail**: cada deploy registra `triggered_by` (el `sub` del JWT) y el `jti`, lo que
   permite rastrear quien hizo que y cuando.
 - **Expiracion opcional**: tokens de corta vida (`--expires-in=1h`) para pipelines CI efimeros.
@@ -881,7 +885,7 @@ bin/rails db:create db:migrate
 bin/rails server -p 3000
 
 # 5. Emitir un token de prueba
-RAILS_ENV=development bin/capfire token:create \
+RAILS_ENV=development bin/capfire token create \
   --name=local-test --apps='*' --envs=staging --cmds=deploy,restart,rollback,status
 
 # 6. Probar
