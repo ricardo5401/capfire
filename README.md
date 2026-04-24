@@ -253,11 +253,25 @@ location /capfire/ {
     proxy_buffering    off;
     proxy_cache        off;
     chunked_transfer_encoding on;
+
+    # Permitir silencios largos sin cerrar la conexion. Los deploys reales
+    # tienen pasos sin stdout durante minutos (vite build, migrations, asset
+    # rsync). El default de nginx es 60s y corta la conexion en el medio.
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
 }
 ```
 
 > Capfire envia `X-Accel-Buffering: no` en todas las respuestas SSE, pero algunos setups de
 > nginx lo ignoran: asegurate de poner `proxy_buffering off` explicitamente.
+
+> **Cloudflare en frente**: si Capfire corre detras de un proxy de Cloudflare (naranja en el
+> dashboard), CF tiene un timeout propio de connection idle (100s en planes Free/Pro, 600s en
+> Business, hasta 6000s en Enterprise). No se puede extender en los planes bajos. Opciones:
+> 1. Usar un DNS record "grey cloud" (proxy off) para el hostname de Capfire.
+> 2. Capfire emite heartbeats SSE cada 15s, asi que en teoria la conexion nunca esta
+>    realmente "idle" -- los silencios largos quedan tapados. Verifica con DevTools
+>    (Network tab) que ves lineas `: keep-alive` llegando cada 15s.
 
 ---
 
