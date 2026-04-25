@@ -69,7 +69,7 @@ jobs:
           # shasum works on both Linux and macOS; sha256sum is Linux-only.
           shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: capfire-${{ matrix.os }}-${{ matrix.arch }}
           path: |
@@ -118,7 +118,7 @@ jobs:
           nfpm pkg --packager deb --config /tmp/nfpm.yaml --target "dist/capfire_${VERSION_NUMBER}_${ARCH}.deb"
           shasum -a 256 dist/*.deb > "dist/capfire_${VERSION_NUMBER}_${ARCH}.deb.sha256"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: capfire-deb-${{ matrix.arch }}
           path: |
