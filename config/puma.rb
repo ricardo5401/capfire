@@ -9,7 +9,7 @@ threads min_threads, max_threads
 
 # Explicit bind — Puma 8 defaults to :: (IPv6) when available; we want
 # a predictable IPv4 address so nginx upstream (127.0.0.1:PORT) works.
-bind "tcp://0.0.0.0:\#{ENV.fetch('PORT', 3000)}"
+bind "tcp://0.0.0.0:#{ENV.fetch('PORT', 3000)}"
 environment ENV.fetch('RAILS_ENV', 'development')
 pidfile ENV.fetch('PIDFILE', 'tmp/pids/server.pid')
 
