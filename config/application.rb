@@ -13,7 +13,7 @@ Bundler.require(*Rails.groups)
 
 module Capfire
   class Application < Rails::Application
-    config.load_defaults 7.1
+    config.load_defaults 8.1
 
     # API-only mode.
     config.api_only = true
