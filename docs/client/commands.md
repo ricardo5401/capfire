@@ -14,6 +14,7 @@ shell scripts and CI.
 | `capfire permission` | Inspect what your token is allowed to do |
 | `capfire deploy APP ENV [BRANCH]` | Deploy an app (streaming by default) |
 | `capfire restart APP ENV` | Restart an app |
+| `capfire run APP ENV TASK` | Run a custom task (sync, reindex, backfill, …) |
 | `capfire status [DEPLOY_ID]` | Show active deploys, or detail one |
 | `capfire deployments` | List your recent deploys (filterable) |
 
@@ -140,6 +141,78 @@ capfire restart myapp staging --async
 Rollback and status aren't exposed as top-level commands in the client
 yet — use `capfire status DEPLOY_ID` to inspect, and the server admin
 CLI for rollbacks if needed.
+
+---
+
+## `capfire run`
+
+Triggers a **task** on the server. Tasks are user-defined commands declared
+under `tasks:` in the app's `capfire.yml`, plus the reserved built-in
+`sync` (git fetch + reset --hard origin/&lt;branch&gt;, then optional
+`tasks.sync.after:` hooks).
+
+```
+capfire run APP ENV TASK [--branch X] [--arg key=value]... [--async] [--wait]
+```
+
+Streaming mode (default): SSE connection to `/tasks`, exit code matches the
+task's exit code. Async mode: 202 + track URL, polling left to the caller.
+
+```bash
+# Pull fresh code + run `uv sync` (whatever the app declares under sync.after)
+capfire run pyworker production sync --branch master
+
+# Reindex with no params
+capfire run pyworker production reindex
+
+# Backfill with required params
+capfire run pyworker production backfill --arg since=2024-01-01
+
+# Multiple params + async
+capfire run pyworker production recompute_kpis \
+  --arg month=2024-04 --arg tenant=acme --async
+
+# Wait for the per-app lock to free instead of failing on 409
+capfire run pyworker production reindex --wait --wait-timeout 30m
+```
+
+Flags:
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--branch X` | `main` | Branch used by `sync` and any `%{branch}` placeholder |
+| `--arg key=value` | — | Repeatable. Maps to a `params:` key declared in yaml |
+| `--async` | `false` | Return 202 immediately instead of streaming logs |
+| `--wait` | `false` | On 409 Conflict, poll the lock and retry until free |
+| `--wait-timeout 30m` | `30m` | Maximum wait when `--wait` is set (`0` = forever) |
+| `--wait-interval 30s` | server hint | Override the polling interval |
+
+Concurrency model:
+
+- At most one task runs per app at a time. A second concurrent request
+  returns `409 Conflict` with the in-flight task's metadata.
+- The reserved `sync` task additionally returns `409 Conflict` if a deploy
+  is currently running on the same app — both rewrite the working dir and
+  cannot coexist.
+- Non-sync tasks **can** run alongside a deploy of the same app. This is
+  intentional: a long backfill must not block a hotfix.
+
+When the server returns 409 with `--wait`, the CLI prints what's blocking
+and the next retry interval, then sleeps and retries. Ctrl+C aborts.
+
+```
+$ capfire run pyworker production reindex --wait
+⚠ Task #87 (backfill by ana, started 12m ago) is in progress — waiting 60s
+⚠ Task #87 (backfill by ana, started 13m ago) is in progress — waiting 60s
+ℹ Running task=reindex on pyworker/production …
+[task output streaming here]
+✓ Task finished successfully
+```
+
+A token needs `cmd: "task:<name>"` (or the `tasks:` shorthand on the
+grant) to be allowed. See [server config → tasks](../server/config.md#tasks)
+for the yaml schema and [HTTP API → Tasks](../server/api.md#tasks) for the
+full request/response shapes.
 
 ---
 

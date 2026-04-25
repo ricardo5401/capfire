@@ -13,11 +13,11 @@ import (
 )
 
 var (
-	runBranch      string
-	runArgs        map[string]string
-	runAsync       bool
-	runWait        bool
-	runWaitTimeout time.Duration
+	runBranch       string
+	runArgs         map[string]string
+	runAsync        bool
+	runWait         bool
+	runWaitTimeout  time.Duration
 	runWaitInterval time.Duration
 )
 
@@ -275,4 +275,3 @@ func formatArgs(args map[string]string) string {
 	}
 	return strings.Join(parts, " ")
 }
-
