@@ -21,6 +21,17 @@ module CapfireCli
       Admin token (everything):
         bin/capfire tokens create --name=admin --grant='*:*:*'
 
+      TASK PERMISSIONS:
+      Tasks (capfire run) are addressed as `task:<name>` in cmds. Mix freely
+      with deploy commands inside the same grant:
+
+        bin/capfire tokens create --name=ops \\
+          --grant='pyworker:production:task:sync,task:reindex,task:backfill'
+
+      Wildcard for "any task on this app/env":
+
+        bin/capfire tokens create --name=ops --grant='pyworker:production:task:*'
+
       LEGACY FLAGS (cartesian product — still supported):
         bin/capfire tokens create --name=ci --apps=myapp --envs=staging --cmds=deploy
     DESC

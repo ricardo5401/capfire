@@ -10,6 +10,11 @@ Rails.application.routes.draw do
   # One-shot commands: restart / rollback / status
   resources :commands, only: %i[create]
 
+  # User-defined tasks (capfire.yml `tasks:` section) + reserved built-in
+  # `sync`. Independent per-app concurrency lock from /deploys, except that
+  # `sync` cross-checks the deploy lock because it mutates git.
+  resources :tasks, only: %i[index create show]
+
   # Token introspection — used by `capfire permission` to show the logged-in
   # user which apps/envs/cmds their token can act on.
   get '/tokens/me', to: 'tokens#me'

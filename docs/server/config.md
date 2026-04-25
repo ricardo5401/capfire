@@ -189,6 +189,148 @@ SLACK_WEBHOOK_MYAPP=https://hooks.slack.com/services/.../a
 SLACK_WEBHOOK_MYAPP_API=https://hooks.slack.com/services/.../b
 ```
 
+### Tasks
+
+Tasks are user-defined commands that run on the cockpit but are NOT part of
+the deploy lifecycle. Use them for application-level work that should be
+triggerable remotely with the same auth + auditing as a deploy:
+
+- Backfills, reindexes, data migrations.
+- Cache warmups, log rotations, vacuums.
+- Pulling fresh code without a full release cycle (the reserved `sync`).
+
+Tasks have their own per-app concurrency lock independent of deploys, so a
+90-minute backfill never freezes a hotfix on the same node. The exception
+is `sync`, which mutates the working directory and therefore blocks (and is
+blocked by) deploys on the same app.
+
+#### Declaring tasks
+
+```yaml
+tasks:
+  reindex:
+    run: "python manage.py reindex --all"
+
+  backfill:
+    run: "python scripts/backfill.py --since=%{since}"
+    params: [since]                      # required keys in `args`
+
+  recompute_kpis:
+    run: "python jobs/kpis.py --month=%{month} --tenant=%{tenant}"
+    params: [month, tenant]
+
+  vacuum_db:
+    run: "psql $DATABASE_URL -c 'VACUUM ANALYZE;'"
+
+  # Reserved name with built-in semantics — see below.
+  sync:
+    after:
+      - "uv sync"
+```
+
+Names match `[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}` (same restriction as app/env
+slugs — values land in `sh -c`, so they must be shell-safe).
+
+#### `params` validation
+
+The runner refuses to execute a task when:
+
+- A key declared in `params:` is missing from the request's `args`.
+- The request includes an `args` key that wasn't declared in `params:`.
+
+Both cases return `400 Bad Request` *before* a `task_run` row is created.
+This catches typos at call time instead of letting a malformed shell
+command fail mid-execution with a confusing error.
+
+#### Built-in `sync` task
+
+`sync` is reserved. Default behavior:
+
+```
+git fetch --prune origin
+git checkout <branch>
+git reset --hard origin/<branch>
+<each command in tasks.sync.after, chained with &&>
+```
+
+The branch comes from the request (`--branch X` in the CLI, or `branch` in
+the JSON body — defaults to `main`). The git primitive is the same one
+used by deploys (`fetch + reset --hard`), so it handles force-pushes,
+divergent branches, and dirty working dirs idempotently — unlike `git
+pull`.
+
+You can override completely by providing a `run:`:
+
+```yaml
+tasks:
+  sync:
+    run: "custom shell here"     # built-in git sync is NOT prepended
+```
+
+Override semantics: full ownership. If you skip the git step yourself, the
+working directory stays where it was.
+
+#### Output convention (important)
+
+Tasks share the same working directory as deploys. The reserved `sync`
+task runs `git reset --hard`, which clobbers any uncommitted versioned
+files. **Tasks that write artifacts (logs, exports, dumps) should write
+OUTSIDE `work_dir`** — typically `/var/lib/<app>/` or `/srv/data/<app>/`.
+
+Anything inside `.gitignore` survives `git reset --hard` but accumulates
+across runs unless your task cleans it up.
+
+#### Concurrency
+
+| Operation | Lock acquired |
+|---|---|
+| Deploy | deploy-lock(app) |
+| Task `sync` | deploy-lock(app) **and** task-lock(app) |
+| Other tasks | task-lock(app) |
+
+Practical consequences:
+
+- Two tasks on the same app are serialized — second request returns
+  `409 Conflict` until the first finishes.
+- A non-sync task can run **alongside** a deploy of the same app. This is
+  intentional: a long backfill must not freeze a release.
+- A `sync` request returns `409 Conflict` if a deploy is currently running
+  on the app, and vice versa. Both touch git; they can't coexist.
+
+The CLI's `--wait` flag turns 409 into a polling loop until the lock is
+free (with `retry_after_seconds` honored when present).
+
+#### Authorization
+
+JWT grants pick tasks via the `cmd` field, prefixed with `task:`. Two
+equivalent shapes are accepted (the second is sugar):
+
+```yaml
+# explicit cmds form (works on every existing token)
+grants:
+  - app: pyworker
+    envs: [production]
+    cmds: ["task:sync", "task:reindex", "task:backfill"]
+
+# shorthand — `tasks:` expands internally to `cmds: ["task:..."]`
+grants:
+  - app: pyworker
+    envs: [production]
+    tasks: ["sync", "reindex", "backfill"]
+```
+
+Wildcards work the same way:
+
+```yaml
+- app: pyworker
+  envs: [production]
+  cmds: ["task:*"]            # any task on pyworker/production
+```
+
+A token that holds only deploy permissions (`cmds: ["deploy"]`) cannot run
+tasks. Mint a separate token for ops work — that's the whole point of
+having two surfaces.
+
 ### Load balancer (Cloudflare)
 
 Capfire can drain this node out of a Cloudflare LB pool before the deploy

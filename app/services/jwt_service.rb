@@ -11,11 +11,17 @@ require 'securerandom'
 #     "jti":  "<uuid>",
 #     "grants": [
 #       { "app": "myapp",     "envs": ["staging"],               "cmds": ["deploy"] },
-#       { "app": "myapp-api", "envs": ["staging", "production"], "cmds": ["deploy", "restart"] }
+#       { "app": "myapp-api", "envs": ["staging", "production"], "cmds": ["deploy", "restart"] },
+#       { "app": "pyworker",  "envs": ["production"],            "tasks": ["sync", "reindex"] }
 #     ],
 #     "iat": <unix>,
 #     "exp": <unix> | nil
 #   }
+#
+# `tasks:` is sugar for `cmds: ["task:sync", "task:reindex", ...]`. A grant
+# can carry both `cmds:` and `tasks:` — they're merged. Authorization for a
+# task always checks `cmd: "task:<name>"`, so writing `tasks: [...]` and
+# `cmds: ["task:..."]` is exactly equivalent.
 #
 # Legacy claim shape (still accepted — tokens emitted before the redesign):
 #   { "sub":..., "jti":..., "apps":[...], "envs":[...], "cmds":[...], "iat":..., "exp":... }
@@ -117,10 +123,21 @@ class JwtService
       hash = grant.respond_to?(:with_indifferent_access) ? grant.with_indifferent_access : grant
       app  = hash['app'].to_s
       envs = Array(hash['envs']).map(&:to_s)
-      cmds = Array(hash['cmds']).map(&:to_s)
+      cmds = combined_cmds(hash)
       return nil if app.empty? || envs.empty? || cmds.empty?
 
       { 'app' => app, 'envs' => envs, 'cmds' => cmds }
+    end
+
+    # Merges `cmds:` with the `tasks:` shorthand. Each entry in `tasks:`
+    # expands to `task:<name>` so authorization (`cmd: "task:<name>"` from
+    # the controller) finds it without having to know about the shorthand.
+    # Duplicates are removed so a token using both forms doesn't end up
+    # with redundant entries.
+    def combined_cmds(hash)
+      explicit = Array(hash['cmds']).map(&:to_s)
+      tasks    = Array(hash['tasks']).map(&:to_s).reject(&:empty?).map { |t| "task:#{t}" }
+      (explicit + tasks).uniq
     end
 
     def grant_matches?(grant, app:, env:, cmd:)
@@ -131,9 +148,26 @@ class JwtService
 
       return false unless grant_app == WILDCARD || grant_app == app
       return false unless grant_envs.include?(WILDCARD) || grant_envs.include?(env)
-      return false unless grant_cmds.include?(WILDCARD) || grant_cmds.include?(cmd)
+      return false unless cmd_allowed?(grant_cmds, cmd)
 
       true
+    end
+
+    # `cmd` is allowed when:
+    #   - the grant has the catch-all wildcard `*`, OR
+    #   - the cmd is listed verbatim in the grant, OR
+    #   - the cmd is a task (`task:<name>`) and the grant lists `task:*` —
+    #     a useful "any task on this app/env" shorthand without granting
+    #     deploy/restart/etc.
+    TASK_WILDCARD = 'task:*'
+    private_constant :TASK_WILDCARD
+
+    def cmd_allowed?(grant_cmds, cmd)
+      return true if grant_cmds.include?(WILDCARD)
+      return true if grant_cmds.include?(cmd)
+      return true if cmd.to_s.start_with?('task:') && grant_cmds.include?(TASK_WILDCARD)
+
+      false
     end
 
     def secret

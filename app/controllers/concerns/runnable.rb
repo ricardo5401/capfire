@@ -19,9 +19,12 @@ module Runnable
 
     begin
       service.call { |event, payload| sse.event(event, payload) }
-    rescue DeployService::Busy
-      sse.event(:error, message: 'another operation in progress for this app+env')
+    rescue DeployService::Busy, TaskService::Busy
+      sse.event(:error, message: 'another operation in progress for this app')
       sse.event(:done, exit_code: 1, status: 'failed', error: 'busy')
+    rescue TaskService::DeployInFlight => e
+      sse.event(:error, message: e.message)
+      sse.event(:done, exit_code: 1, status: 'failed', error: 'deploy_in_flight')
     rescue StandardError => e
       Rails.logger.error("[#{subsystem}] #{e.class}: #{e.message}")
       sse.event(:error, message: "#{e.class}: #{e.message}")
@@ -33,15 +36,19 @@ module Runnable
 
   # `extra` is merged into the 202 JSON body. Callers pass app/env/branch/cmd
   # plus the human-readable `message` they want the caller to see.
-  def run_async(service, subsystem:, extra: {})
-    deploy = service.enqueue
+  #
+  # `resource:` selects whether the response uses `deploy_id` + `/deploys/:id`
+  # tracking (default) or `task_run_id` + `/tasks/:id` tracking. Each
+  # subsystem keeps its existing JSON contract — clients written for the
+  # deploy endpoints don't need to learn the task vocabulary.
+  def run_async(service, subsystem:, extra: {}, resource: :deploy)
+    record = service.enqueue
     spawn_background(service, subsystem: subsystem)
 
-    render(json: extra.merge(
-      status: 'accepted',
-      deploy_id: deploy.id,
-      track_url: tracking_url(deploy.id)
-    ), status: :accepted)
+    body = extra.merge(status: 'accepted', track_url: tracking_url(record.id, resource: resource))
+    body[id_key_for(resource)] = record.id
+
+    render(json: body, status: :accepted)
   end
 
   def spawn_background(service, subsystem:)
@@ -54,9 +61,14 @@ module Runnable
     end
   end
 
-  def tracking_url(deploy_id)
+  def tracking_url(record_id, resource: :deploy)
     base = ENV['CAPFIRE_PUBLIC_URL'].presence || request.base_url
-    "#{base.sub(%r{/$}, '')}/deploys/#{deploy_id}"
+    path = resource == :task ? 'tasks' : 'deploys'
+    "#{base.sub(%r{/$}, '')}/#{path}/#{record_id}"
+  end
+
+  def id_key_for(resource)
+    resource == :task ? :task_run_id : :deploy_id
   end
 
   def render_busy(active_deploy)

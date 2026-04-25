@@ -18,6 +18,9 @@ client does under the hood.
 | `POST` | `/deploys` | Start a deploy (SSE or async). |
 | `GET` | `/deploys/:id` | Full status + log of one deploy. |
 | `POST` | `/commands` | Run restart / rollback / status. |
+| `GET` | `/tasks` | List task runs you triggered (mine-only). |
+| `POST` | `/tasks` | Run a custom task (SSE or async). |
+| `GET` | `/tasks/:id` | Full status + log of one task run. |
 | `POST` | `/lb/drain` | Drain this node out of the LB pool. |
 | `POST` | `/lb/restore` | Re-enable this node in the LB pool. |
 
@@ -241,6 +244,178 @@ curl -N -X POST https://capfire.example.com/commands \
 
 `cmd` must be one of: `restart`, `rollback`, `status`. Unknown values
 return `400 Bad Request`.
+
+## Tasks
+
+Tasks are user-defined commands declared per-app in `capfire.yml`, plus the
+reserved built-in `sync`. They're fully separate from `/commands` (which
+only handles the canonical lifecycle commands).
+
+See [Configuration → Tasks](config.md#tasks) for the yaml shape, the
+concurrency model, and the `sync` built-in semantics. This section covers
+the HTTP surface only.
+
+### `GET /tasks`
+
+Lists task runs triggered by the current token holder. Same privacy
+posture as `/deploys`.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://capfire.example.com/tasks?active=true&app=pyworker&limit=50"
+```
+
+Query parameters (all optional):
+
+| Param | Values | Default |
+|---|---|---|
+| `active` | `true` / `false` | `false` |
+| `app` | app name | any |
+| `env` | env name | any |
+| `task` | task name | any |
+| `status` | `pending` / `running` / `success` / `failed` / `canceled` | any |
+| `limit` | 1–100 | 20 |
+
+Response:
+
+```json
+{
+  "task_runs": [
+    {
+      "id": 87,
+      "app": "pyworker",
+      "env": "production",
+      "task": "backfill",
+      "branch": "master",
+      "args": { "since": "2024-01-01" },
+      "status": "running",
+      "exit_code": null,
+      "triggered_by": "ana",
+      "started_at": "2026-04-24T14:32:11Z",
+      "finished_at": null,
+      "duration_seconds": null
+    }
+  ]
+}
+```
+
+### `POST /tasks`
+
+Triggers a task. Same two modes as `/deploys`:
+
+**Streaming (default).** Returns `text/event-stream`:
+
+```bash
+curl -N -X POST https://capfire.example.com/tasks \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "app":   "pyworker",
+        "env":   "production",
+        "task":  "backfill",
+        "branch":"master",
+        "args":  { "since": "2024-01-01" }
+      }'
+```
+
+**Async.** Returns `202 Accepted` with `task_run_id` and `track_url`:
+
+```bash
+curl -X POST https://capfire.example.com/tasks \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "app":   "pyworker",
+        "env":   "production",
+        "task":  "sync",
+        "branch":"master",
+        "async": true
+      }'
+```
+
+Response (202):
+
+```json
+{
+  "status":      "accepted",
+  "task_run_id": 87,
+  "track_url":   "https://capfire.example.com/tasks/87",
+  "app":         "pyworker",
+  "env":         "production",
+  "task":        "sync",
+  "branch":      "master",
+  "args":        {},
+  "message":     "task=sync queued. Poll the track_url for status."
+}
+```
+
+Body fields:
+
+| Field | Required | Notes |
+|---|---|---|
+| `app` | yes | Must match `[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}` |
+| `env` | yes | Must match `[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}` |
+| `task` | yes | A key under `tasks:` in the app's yaml, or `sync` |
+| `branch` | no | Defaults to `main`. Used by `sync` and any `%{branch}` placeholder |
+| `args` | no | Object of string values. Server validates against the task's `params:` |
+| `async` | no | When `true`, returns `202` instead of streaming |
+
+Authorization claim needed: `cmd: "task:<name>"` (or the `tasks: [...]`
+shorthand on the grant).
+
+#### 409 Conflict shapes
+
+`/tasks` can return 409 in two distinct scenarios. The body shape changes
+slightly so the caller can disambiguate:
+
+**Another task is already running on the same app:**
+
+```json
+{
+  "error":   "conflict",
+  "message": "another task is already in progress for app=pyworker",
+  "active": {
+    "task_run_id": 87,
+    "task":        "backfill",
+    "env":         "production",
+    "branch":      "master",
+    "status":      "running",
+    "triggered_by":"ana",
+    "started_at":  "2026-04-24T14:32:11Z"
+  },
+  "retry_after_seconds": 60
+}
+```
+
+**`sync` requested while a deploy is running on the same app:**
+
+```json
+{
+  "error":   "conflict",
+  "message": "cannot run sync while a deploy is in progress for app=pyworker",
+  "active_deploy": {
+    "id":          42,
+    "command":     "deploy",
+    "branch":      "master",
+    "status":      "running",
+    "triggered_by":"ana",
+    "started_at":  "2026-04-24T14:30:00Z"
+  },
+  "retry_after_seconds": 120
+}
+```
+
+The Go CLI's `--wait` flag turns either case into a polling loop.
+
+### `GET /tasks/:id`
+
+Full detail of a single task run, including the complete log. Same JSON
+shape as the items in `GET /tasks`, plus a `log` key with the raw output.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  https://capfire.example.com/tasks/87
+```
 
 ## `POST /lb/drain` and `POST /lb/restore`
 

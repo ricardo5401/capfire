@@ -29,6 +29,9 @@ Capfire is the smallest thing that fixes that:
   API with a scoped JWT.
 - Per-app `capfire.yml` files declare what "deploy" means: any shell
   command, Capistrano or not.
+- The same yaml declares `tasks:` — arbitrary remote commands (reindexes,
+  backfills, the built-in `sync`) with their own per-app concurrency lock,
+  triggerable from `capfire run`.
 
 Opinionated in all the right places, thin everywhere else.
 
