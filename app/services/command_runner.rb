@@ -28,21 +28,45 @@ class CommandRunner
   class Error < StandardError; end
   class AppNotFound < Error; end
 
+  # Shell snippet that brings the working directory to the exact tip of
+  # `origin/<branch>`. Idempotent: handles force-pushes, divergent branches
+  # and dirty working dirs without surprises (unlike `git pull`).
+  #
+  # Exposed as a class method so other components (notably AppConfig#task_for
+  # building the built-in `sync` task) can compose the same primitive without
+  # reaching into runner internals.
+  def self.git_sync_command(branch:)
+    ref = branch.to_s.shellescape
+    [
+      'git fetch --prune origin',
+      "git checkout #{ref}",
+      "git reset --hard origin/#{ref}"
+    ].join(' && ')
+  end
+
   attr_reader :app, :env, :branch, :command, :work_dir
 
-  def initialize(app:, env:, branch: 'main', command: 'deploy', app_config: nil)
+  # `command_string`: an already-resolved shell string. When present, it
+  # short-circuits `build_full_command` — no AppConfig lookup, no git_sync,
+  # no pre_deploy chaining. Used by `TaskService`, which resolves its own
+  # string via `AppConfig#task_for` (with task-specific built-in semantics
+  # like the reserved `sync`) and just needs the runner's PTY+bundler-clean
+  # execution machinery.
+  def initialize(app:, env:, branch: 'main', command: 'deploy', app_config: nil,
+                 command_string: nil)
     @app = app
     @env = env
     @branch = branch
     @command = command
     @app_config = app_config || AppConfig.new(app: app)
     @work_dir = @app_config.work_dir
+    @command_string = command_string
   end
 
   # Yields each raw line (without trailing newline) and returns the process exit code.
   def run(&block)
     ensure_work_dir!
-    command_string = build_full_command
+    command_string = @command_string || build_full_command
 
     Rails.logger.info("[runner] cd #{work_dir} && #{command_string}")
 
@@ -83,12 +107,7 @@ class CommandRunner
   end
 
   def git_sync_command
-    ref = branch.to_s.shellescape
-    [
-      'git fetch --prune origin',
-      "git checkout #{ref}",
-      "git reset --hard origin/#{ref}"
-    ].join(' && ')
+    self.class.git_sync_command(branch: branch)
   end
 
   # Uses `sh -c` so custom `capfire.yml` commands can include pipes, env vars,
