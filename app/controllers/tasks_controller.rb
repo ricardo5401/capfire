@@ -79,6 +79,15 @@ class TasksController < ApplicationController
       return
     end
 
+    # Validate `args` upfront so missing/unknown params surface as 400
+    # BEFORE we enqueue. Without this, async mode would return 202 and the
+    # background thread would only blow up when format() hits a missing
+    # placeholder — leaving the caller polling a track_url for an error
+    # they could have learned about synchronously. Sync-mode `sync` task
+    # may legitimately be called without args even when other tasks
+    # declare params, so the lookup happens on the actual task.
+    app_config.validate_task_args!(name: task, args: args)
+
     service = build_service(
       app: app, env: env, task: task, branch: branch, args: args, app_config: app_config
     )

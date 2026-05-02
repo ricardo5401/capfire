@@ -42,6 +42,20 @@ RSpec.describe 'POST /tasks', type: :request do
         0
       end
     end)
+
+    # `run_async` normally spawns a Thread to do the work after the 202
+    # is returned. Threads pull their own connection from the pool, which
+    # bypasses RSpec's transactional fixtures and leaves rows behind that
+    # poison subsequent specs. Run the background work INLINE for tests:
+    # the controller still renders 202, but we avoid the thread+pool
+    # dance entirely so every DB mutation lives inside the spec's
+    # transaction and rolls back cleanly.
+    allow_any_instance_of(TasksController).to receive(:spawn_background) do |_ctrl, service, **|
+      service.call { |_event, _payload| }
+    rescue StandardError
+      # Match production behavior — spawn_background swallows errors.
+      nil
+    end
   end
 
   after { FileUtils.remove_entry(tmp_root) if File.directory?(tmp_root) }
