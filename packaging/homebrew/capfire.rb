@@ -27,7 +27,7 @@
 class Capfire < Formula
   desc "JWT-authenticated deploy orchestrator — developer CLI"
   homepage "https://github.com/ricardo5401/capfire"
-  version "0.1.0"
+  version "0.4.0"
   license "MIT"
 
   on_macos do
