@@ -280,15 +280,31 @@ permission rules).
 When you run without `--all`, the server includes a hint reminding you
 the flag exists. The hint is silenced once you opt in.
 
+Results are paginated (default 20 per page). When the result set spans
+more than one page, the command prints a footer telling you where you
+are and how to get the next page:
+
+```
+› page 1 of 13 (showing 1-20 of 247)
+  next: capfire deployments --page=2
+```
+
+Use `--page=N` to jump to any page; use `--per-page=N` to change the
+page size (server caps at 100).
+
 ```bash
 # Yours
 capfire deployments
-capfire deployments --app=myapp --limit=50
+capfire deployments --app=myapp --per-page=50
 capfire deployments --env=production --status=failed
 
 # The team's
 capfire deployments --all
 capfire deployments --all --app=udoczcom --status=running
+
+# Older deploys
+capfire deployments --page=3
+capfire deployments --all --page=2 --per-page=50
 ```
 
 Flags:
@@ -299,7 +315,12 @@ Flags:
 | `--app NAME` | Only deploys for this app |
 | `--env NAME` | Only deploys for this env |
 | `--status X` | `pending` / `running` / `success` / `failed` / `canceled` |
-| `--limit N` | Rows to return (default 20, server caps at 100) |
+| `--page N` | 1-based page number (default 1) |
+| `--per-page N` | Rows per page (default 20, server caps at 100) |
+
+`--limit N` is still accepted as a hidden alias for `--per-page` so
+existing scripts and aliases keep working unchanged. New code should
+use `--per-page` for clarity.
 
 ---
 

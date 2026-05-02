@@ -21,6 +21,8 @@ var (
 	taskEnvFlag string
 	taskName    string
 	taskLimit   int
+	taskPage    int
+	taskPerPage int
 )
 
 var taskCmd = &cobra.Command{
@@ -33,10 +35,15 @@ you have any permission on — same visibility rule as ` + "`capfire deployments
 With a task_run id: fetches full status + exit code, and optionally prints
 the captured log (--log, --tail).
 
+Pagination: results are paginated (default 20 per page). Use --page to
+navigate, --per-page to change the page size up to the server cap of
+100. The footer tells you the current page and total.
+
 Examples:
   capfire task                          # list your active tasks
   capfire task --all                    # list active tasks from your team
   capfire task --app pyworker           # filter the list
+  capfire task --page=2                 # older entries
   capfire task 87                       # detail of one
   capfire task 87 --log --tail 200`,
 	Args: cobra.MaximumNArgs(1),
@@ -51,7 +58,11 @@ func init() {
 	taskCmd.Flags().StringVar(&taskApp, "app", "", "Filter list by app")
 	taskCmd.Flags().StringVar(&taskEnvFlag, "env", "", "Filter list by env")
 	taskCmd.Flags().StringVar(&taskName, "task", "", "Filter list by task name")
-	taskCmd.Flags().IntVar(&taskLimit, "limit", 20, "Max rows to list (server caps at 100)")
+	taskCmd.Flags().IntVar(&taskPage, "page", 1, "1-based page number")
+	taskCmd.Flags().IntVar(&taskPerPage, "per-page", 20, "Rows per page (server caps at 100)")
+	// Hidden legacy alias — see comment in deployments.go for rationale.
+	taskCmd.Flags().IntVar(&taskLimit, "limit", 0, "Deprecated alias for --per-page")
+	_ = taskCmd.Flags().MarkHidden("limit")
 	Root.AddCommand(taskCmd)
 }
 
@@ -76,13 +87,22 @@ func runTask(_ *cobra.Command, args []string) error {
 }
 
 func listTaskRuns(ctx context.Context, client *api.Client) error {
+	// Same precedence rule as `capfire deployments`: a non-zero --limit
+	// (the legacy hidden flag) wins over --per-page so old scripts keep
+	// behaving identically.
+	perPage := taskPerPage
+	if taskLimit > 0 {
+		perPage = taskLimit
+	}
+
 	list, err := client.ListTasks(ctx, api.ListTasksParams{
-		All:    taskAll,
-		Active: taskActive,
-		App:    taskApp,
-		Env:    taskEnvFlag,
-		Task:   taskName,
-		Limit:  taskLimit,
+		All:     taskAll,
+		Active:  taskActive,
+		App:     taskApp,
+		Env:     taskEnvFlag,
+		Task:    taskName,
+		Page:    taskPage,
+		PerPage: perPage,
 	})
 	if err != nil {
 		return err
@@ -90,10 +110,12 @@ func listTaskRuns(ctx context.Context, client *api.Client) error {
 	if len(list.TaskRuns) == 0 {
 		ui.Infof("No matching task runs for this token.")
 		printScopeHint(list.Hint)
+		printPaginationFooter(list.Pagination, "task")
 		return nil
 	}
 	printTaskRunTable(list.TaskRuns)
 	printScopeHint(list.Hint)
+	printPaginationFooter(list.Pagination, "task")
 	return nil
 }
 

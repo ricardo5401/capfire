@@ -15,11 +15,9 @@
 # the in-flight deploy.
 class DeploysController < ApplicationController
   include Runnable
+  include Paginatable
 
   SUBSYSTEM = 'deploys#create'
-
-  DEFAULT_LIMIT = 20
-  MAX_LIMIT = 100
 
   # GET /deploys
   #
@@ -34,25 +32,31 @@ class DeploysController < ApplicationController
   # us baking team rosters into Capfire.
   #
   # Filters:
-  #   ?all=true      => switch from "mine only" to "anything I have access to"
-  #   ?active=true   => only status in (pending, running)
-  #   ?app=NAME      => filter by app (validated against visible_apps when
-  #                     ?all=true; ignored otherwise — owners see their
-  #                     deploys regardless of current grants)
-  #   ?env=NAME      => filter by env
-  #   ?status=NAME   => one of Deploy::STATUSES
-  #   ?limit=N       => cap rows (default 20, max 100)
+  #   ?all=true       => switch from "mine only" to "anything I have access to"
+  #   ?active=true    => only status in (pending, running)
+  #   ?app=NAME       => filter by app (validated against visible_apps when
+  #                      ?all=true; ignored otherwise — owners see their
+  #                      deploys regardless of current grants)
+  #   ?env=NAME       => filter by env
+  #   ?status=NAME    => one of Deploy::STATUSES
+  #   ?page=N         => 1-based page number (default 1)
+  #   ?per_page=N     => rows per page (default 20, max 100)
+  #   ?limit=N        => deprecated alias for `per_page`; honored when
+  #                      `per_page` is missing so legacy curl scripts
+  #                      keep working unchanged
   #
-  # Response includes `scope` ("mine" or "all") and a `hint` string when
-  # `?all` was NOT requested — surfaces the team-visibility feature without
-  # forcing every client to know about it upfront.
+  # Response includes `scope` ("mine" or "all"), an optional `hint` and a
+  # `pagination` object with page/per_page/total_count/total_pages so the
+  # client can render "page 3 of 13" without a second request.
   def index
     all_mode = truthy?(params[:all])
     scope = build_index_scope(all_mode: all_mode)
     scope = apply_index_filters(scope, all_mode: all_mode)
-    scope = scope.limit(parse_limit(params[:limit]))
 
-    render(json: index_payload(scope, all_mode: all_mode))
+    page_params = pagination_params
+    paginated, meta = paginate(scope, **page_params)
+
+    render(json: index_payload(paginated, all_mode: all_mode, meta: meta))
   end
 
   def create
@@ -186,10 +190,11 @@ class DeploysController < ApplicationController
     raise JwtService::Unauthorized, "token has no access to app=#{app}"
   end
 
-  def index_payload(scope, all_mode:)
+  def index_payload(scope, all_mode:, meta:)
     payload = {
       deploys: scope.map(&:as_status_json),
-      scope: all_mode ? 'all' : 'mine'
+      scope: all_mode ? 'all' : 'mine',
+      pagination: meta
     }
     unless all_mode
       payload[:hint] = 'showing only your deploys; pass `all=true` to see ' \
@@ -218,14 +223,5 @@ class DeploysController < ApplicationController
 
   def truthy?(value)
     ActiveModel::Type::Boolean.new.cast(value)
-  end
-
-  def parse_limit(raw)
-    return DEFAULT_LIMIT if raw.blank?
-
-    value = raw.to_i
-    return DEFAULT_LIMIT if value <= 0
-
-    [ value, MAX_LIMIT ].min
   end
 end

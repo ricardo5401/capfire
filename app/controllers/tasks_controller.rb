@@ -19,11 +19,9 @@
 #     intentional, so a long backfill never freezes a hotfix.
 class TasksController < ApplicationController
   include Runnable
+  include Paginatable
 
   SUBSYSTEM = 'tasks#create'
-
-  DEFAULT_LIMIT = 20
-  MAX_LIMIT = 100
 
   # Strict task name whitelist. Same reasoning as APP_PATTERN: this value
   # ends up in shell commands via `sh -c`, so we never let through anything
@@ -32,20 +30,26 @@ class TasksController < ApplicationController
 
   # GET /tasks
   #
-  # Same scoping rules as DeploysController#index:
+  # Same scoping rules as DeploysController#index plus the same pagination
+  # contract:
   #   - default: only task runs triggered by the caller (`mine`).
   #   - `?all=true`: every task run on apps the caller has visibility on
   #     (any grant on the app puts it in scope).
+  #   - `?page=N` / `?per_page=N` (default 1 / 20, max 100). Legacy
+  #     `?limit=N` is honored as an alias for `per_page` so old curl
+  #     scripts keep working.
   #
-  # See DeploysController#index for the rationale on the `?all` flag and
-  # the `hint` returned when it's not requested.
+  # See DeploysController#index for the full rationale; this endpoint is
+  # an exact mirror so client-side paging code can be shared.
   def index
     all_mode = truthy?(params[:all])
     scope = build_index_scope(all_mode: all_mode)
     scope = apply_index_filters(scope, all_mode: all_mode)
-    scope = scope.limit(parse_limit(params[:limit]))
 
-    render(json: index_payload(scope, all_mode: all_mode))
+    page_params = pagination_params
+    paginated, meta = paginate(scope, **page_params)
+
+    render(json: index_payload(paginated, all_mode: all_mode, meta: meta))
   end
 
   # POST /tasks
@@ -199,10 +203,11 @@ class TasksController < ApplicationController
     raise JwtService::Unauthorized, "token has no access to app=#{app}"
   end
 
-  def index_payload(scope, all_mode:)
+  def index_payload(scope, all_mode:, meta:)
     payload = {
       task_runs: scope.map(&:as_status_json),
-      scope: all_mode ? 'all' : 'mine'
+      scope: all_mode ? 'all' : 'mine',
+      pagination: meta
     }
     unless all_mode
       payload[:hint] = 'showing only your task runs; pass `all=true` to see ' \
@@ -289,14 +294,5 @@ class TasksController < ApplicationController
 
   def truthy?(value)
     ActiveModel::Type::Boolean.new.cast(value)
-  end
-
-  def parse_limit(raw)
-    return DEFAULT_LIMIT if raw.blank?
-
-    value = raw.to_i
-    return DEFAULT_LIMIT if value <= 0
-
-    [ value, MAX_LIMIT ].min
   end
 end

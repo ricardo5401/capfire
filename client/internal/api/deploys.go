@@ -36,10 +36,26 @@ type Deploy struct {
 // marker ("mine" or "all") and an optional `hint` string telling users
 // about the `--all` flag — both surfaced verbatim by the CLI so the
 // behavior is discoverable without reading docs.
+//
+// Pagination is always present on this endpoint (even on the first
+// page) so the client can render a "page X of Y" footer without
+// branching on whether the field exists. Server contract documented in
+// docs/server/api.md.
 type DeployList struct {
-	Deploys []Deploy `json:"deploys"`
-	Scope   string   `json:"scope,omitempty"`
-	Hint    string   `json:"hint,omitempty"`
+	Deploys    []Deploy    `json:"deploys"`
+	Scope      string      `json:"scope,omitempty"`
+	Hint       string      `json:"hint,omitempty"`
+	Pagination *Pagination `json:"pagination,omitempty"`
+}
+
+// Pagination is the metadata block returned alongside every paginated
+// listing endpoint. Same shape across `/deploys` and `/tasks` so a
+// single helper on the CLI side can render the footer for both.
+type Pagination struct {
+	Page       int `json:"page"`
+	PerPage    int `json:"per_page"`
+	TotalCount int `json:"total_count"`
+	TotalPages int `json:"total_pages"`
 }
 
 // AsyncAck is the 202 payload returned by async deploys/commands.
@@ -59,13 +75,24 @@ type AsyncAck struct {
 // `All` flips the server-side scope from "deploys I triggered" to "deploys
 // on every app I have any grant on" — that's how a teammate sees your
 // in-flight deploy. Default is the conservative "mine only" scope.
+//
+// Pagination params:
+//   - Page (1-based; the server treats out-of-range pages as empty
+//     results, not errors).
+//   - PerPage (server caps at 100).
+//   - Limit is the LEGACY param — kept for backwards-compat with
+//     scripts pinned to it. The server uses it as an alias for PerPage
+//     when PerPage is not set; on the CLI side we send PerPage when the
+//     user asked for `--per-page` and Limit when they used `--limit`.
 type ListDeploysParams struct {
-	All    bool
-	Active bool
-	App    string
-	Env    string
-	Status string
-	Limit  int
+	All     bool
+	Active  bool
+	App     string
+	Env     string
+	Status  string
+	Page    int
+	PerPage int
+	Limit   int
 }
 
 func (p ListDeploysParams) values() url.Values {
@@ -84,6 +111,12 @@ func (p ListDeploysParams) values() url.Values {
 	}
 	if p.Status != "" {
 		q.Set("status", p.Status)
+	}
+	if p.Page > 0 {
+		q.Set("page", fmt.Sprintf("%d", p.Page))
+	}
+	if p.PerPage > 0 {
+		q.Set("per_page", fmt.Sprintf("%d", p.PerPage))
 	}
 	if p.Limit > 0 {
 		q.Set("limit", fmt.Sprintf("%d", p.Limit))

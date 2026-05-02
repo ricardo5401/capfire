@@ -62,7 +62,12 @@ func runStatus(_ *cobra.Command, args []string) error {
 }
 
 func listActive(ctx context.Context, client *api.Client) error {
-	list, err := client.ListDeploys(ctx, api.ListDeploysParams{Active: true, Limit: 20})
+	// Active deploys are by definition very few (one per app at a time).
+	// We don't expose --page on this command because seeing "page 2 of
+	// 1" for the active set would be more confusing than helpful — but
+	// we DO request a generous PerPage so the rare case of multiple
+	// concurrent runs across apps fits on one page.
+	list, err := client.ListDeploys(ctx, api.ListDeploysParams{Active: true, PerPage: 50})
 	if err != nil {
 		return err
 	}
@@ -73,6 +78,9 @@ func listActive(ctx context.Context, client *api.Client) error {
 	}
 	printDeployTable(list.Deploys)
 	printScopeHint(list.Hint)
+	// Footer only fires when there ARE multiple pages — the helper is a
+	// no-op for single-page results, which is the active-deploys norm.
+	printPaginationFooter(list.Pagination, "deployments")
 	return nil
 }
 

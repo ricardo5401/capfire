@@ -84,7 +84,9 @@ Query parameters (all optional):
 | `app` | app name (validated against visible apps in `?all=true` mode) | any |
 | `env` | env name | any |
 | `status` | `pending` / `running` / `success` / `failed` / `canceled` | any |
-| `limit` | 1–100 | 20 |
+| `page` | 1-based page number; out-of-range returns an empty list | `1` |
+| `per_page` | rows per page, 1–100 | `20` |
+| `limit` | **deprecated alias for `per_page`** — honored when `per_page` is missing | — |
 
 Response:
 
@@ -107,7 +109,13 @@ Response:
     }
   ],
   "scope": "mine",
-  "hint": "showing only your deploys; pass `all=true` to see every deploy on apps you have access to"
+  "hint": "showing only your deploys; pass `all=true` to see every deploy on apps you have access to",
+  "pagination": {
+    "page": 1,
+    "per_page": 20,
+    "total_count": 247,
+    "total_pages": 13
+  }
 }
 ```
 
@@ -115,6 +123,19 @@ Response:
 discoverability mechanism for the team-visibility feature. `scope` is
 always `"mine"` or `"all"` so clients can branch on it without parsing
 the hint string.
+
+`pagination` is always present, even on empty results. `total_pages`
+is `1` (not `0`) when `total_count` is zero so client UIs never have to
+special-case the empty footer. The pagination metadata reflects the
+**filtered** scope — applying `?status=running` shrinks `total_count`
+to only the running rows, which is what a "page X of Y" footer over a
+filtered listing has to mean.
+
+`per_page` values above 100 are silently clamped to 100. Out-of-range
+`page` values (e.g. `?page=999` against 5 rows) return an empty
+`deploys` array with `pagination.page=999` echoed back — never a 4xx.
+That keeps "next page is empty → hide the next button" trivial in
+client code.
 
 ## `POST /deploys`
 
@@ -347,13 +368,14 @@ the HTTP surface only.
 
 ### `GET /tasks`
 
-Same scoping rules as `GET /deploys`: defaults to "yours only", flips to
-"every task run on apps you can see" with `?all=true`. Response includes
-the same `scope`/`hint` metadata.
+Same scoping and pagination rules as `GET /deploys`: defaults to
+"yours only", flips to "every task run on apps you can see" with
+`?all=true`, slices via `?page` and `?per_page` (legacy `?limit` still
+honored as an alias).
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "https://capfire.example.com/tasks?all=true&active=true&app=pyworker&limit=50"
+  "https://capfire.example.com/tasks?all=true&active=true&app=pyworker&per_page=50"
 ```
 
 Query parameters (all optional):
@@ -366,7 +388,9 @@ Query parameters (all optional):
 | `env` | env name | any |
 | `task` | task name | any |
 | `status` | `pending` / `running` / `success` / `failed` / `canceled` | any |
-| `limit` | 1–100 | 20 |
+| `page` | 1-based page number; out-of-range returns an empty list | `1` |
+| `per_page` | rows per page, 1–100 | `20` |
+| `limit` | **deprecated alias for `per_page`** | — |
 
 Response:
 
@@ -387,9 +411,21 @@ Response:
       "finished_at": null,
       "duration_seconds": null
     }
-  ]
+  ],
+  "scope": "mine",
+  "pagination": {
+    "page": 1,
+    "per_page": 20,
+    "total_count": 1,
+    "total_pages": 1
+  }
 }
 ```
+
+The `pagination` block is identical in shape to the one returned by
+`GET /deploys` — same fields, same edge cases (clamp to 100, tolerate
+out-of-range pages, reflect the filtered scope). See the deploys
+section above for the full semantics.
 
 ### `POST /tasks`
 
