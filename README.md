@@ -89,6 +89,10 @@ capfire deploy myapp production master
 - **[Commands](docs/client/commands.md)** — `capfire deploy / restart / status / deployments / permission / config`.
 - **[Configuration](docs/client/config.md)** — config file, multiple servers, CI usage.
 
+### Maintainer
+
+- **[Cutting a release](docs/release.md)** — `./scripts/release.sh`, GitHub Actions, Homebrew tap automation.
+
 ## Repository layout
 
 ```
@@ -101,6 +105,7 @@ capfire/
 │   ├── install-server.sh
 │   ├── install-client.sh
 │   ├── uninstall-server.sh
+│   ├── release.sh           # cut a new release (maintainer)
 │   └── templates/           # systemd unit + env template
 └── AGENTS.md                # Conventions for contributors (and AI agents)
 ```
