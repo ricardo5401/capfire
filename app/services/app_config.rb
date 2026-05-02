@@ -135,6 +135,23 @@ class AppConfig
     tasks_section.key?(name.to_s)
   end
 
+  # Validates that `args` matches the `params:` declared by the task.
+  # Raises `AppConfig::InvalidConfig` when:
+  #   - a declared param is missing from args, OR
+  #   - args carries a key not declared under params (typo guard).
+  #
+  # This is the SAME validation `task_for` performs internally; the public
+  # helper exists so the controller can fail fast with HTTP 400 BEFORE
+  # creating a TaskRun + spawning the background thread. Without it, the
+  # async path returns 202, then the thread blows up when it tries to
+  # interpolate the missing placeholder, and the user only finds out by
+  # polling /tasks/:id.
+  def validate_task_args!(name:, args: {})
+    spec = task_spec(name)
+    declared = Array(spec['params']).map(&:to_s)
+    validate_args!(name: name, declared: declared, given: args)
+  end
+
   # Names of every task callable on this app, including the reserved `sync`.
   # Used by the controller to validate input before authorization.
   def task_names
