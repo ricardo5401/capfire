@@ -44,7 +44,7 @@ class CommandRunner
     ].join(' && ')
   end
 
-  attr_reader :app, :env, :branch, :command, :work_dir
+  attr_reader :app, :env, :branch, :command, :work_dir, :pid
 
   # `command_string`: an already-resolved shell string. When present, it
   # short-circuits `build_full_command` — no AppConfig lookup, no git_sync,
@@ -52,8 +52,15 @@ class CommandRunner
   # string via `AppConfig#task_for` (with task-specific built-in semantics
   # like the reserved `sync`) and just needs the runner's PTY+bundler-clean
   # execution machinery.
+  #
+  # `on_spawn`: optional callable invoked with the OS PID immediately after
+  # the child is spawned. The caller (DeployService / TaskService) uses
+  # this to persist the PID so a sibling request (or the admin CLI) can
+  # later abort the run via `POST /:id/abort`. Receiving the PID via
+  # callback (instead of `runner.pid` polling) avoids a race where the
+  # caller reads `pid` before spawn completes.
   def initialize(app:, env:, branch: 'main', command: 'deploy', app_config: nil,
-                 command_string: nil)
+                 command_string: nil, on_spawn: nil)
     @app = app
     @env = env
     @branch = branch
@@ -61,6 +68,8 @@ class CommandRunner
     @app_config = app_config || AppConfig.new(app: app)
     @work_dir = @app_config.work_dir
     @command_string = command_string
+    @on_spawn = on_spawn
+    @pid = nil
   end
 
   # Yields each raw line (without trailing newline) and returns the process exit code.
@@ -112,8 +121,14 @@ class CommandRunner
 
   # Uses `sh -c` so custom `capfire.yml` commands can include pipes, env vars,
   # chained commands, or call arbitrary scripts transparently.
+  #
+  # PTY.spawn implicitly creates a new session/process group for the child,
+  # so the spawned PID is also the pgid. AbortService relies on this: it
+  # signals the negative PID (`Process.kill('-TERM', pid)`) to nuke the
+  # whole tree (sh + cap + ssh + ruby) instead of orphaning subprocesses.
   def run_with_pty(command_string, &block)
     PTY.spawn({ 'TERM' => 'xterm-256color' }, 'sh', '-c', command_string, chdir: work_dir) do |reader, _writer, pid|
+      record_pid(pid)
       reader.each_line { |line| block&.call(line.chomp) }
     rescue Errno::EIO
       # Expected when the child closes the PTY — stop reading.
@@ -127,13 +142,34 @@ class CommandRunner
     run_with_open3(command_string, &block)
   end
 
+  # Open3 fallback (rare — only when /dev/ptmx is unavailable). We pass
+  # `pgroup: true` so the child becomes the leader of its own process
+  # group, mirroring PTY's default and keeping AbortService's group-kill
+  # logic uniform across both transports.
   def run_with_open3(command_string, &block)
     exit_code = 1
-    Open3.popen2e('sh', '-c', command_string, chdir: work_dir) do |_stdin, stdout_err, wait_thr|
+    Open3.popen2e(
+      'sh', '-c', command_string,
+      chdir: work_dir, pgroup: true
+    ) do |_stdin, stdout_err, wait_thr|
+      record_pid(wait_thr.pid)
       stdout_err.each_line { |line| block&.call(line.chomp) }
       exit_code = wait_thr.value.exitstatus || 1
     end
     exit_code
+  end
+
+  # Stores the spawned PID on the instance and notifies the caller via the
+  # on_spawn callback (when provided). Wrapped in a rescue because failing
+  # to persist the PID must NEVER abort the actual run — losing abort
+  # capability is strictly less bad than crashing a deploy mid-flight.
+  def record_pid(pid)
+    @pid = pid
+    return unless @on_spawn
+
+    @on_spawn.call(pid)
+  rescue StandardError => e
+    Rails.logger.warn("[runner] on_spawn callback failed: #{e.class}: #{e.message}")
   end
 
   def safe_wait(pid)

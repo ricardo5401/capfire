@@ -23,9 +23,17 @@ class Deploy < ApplicationRecord
     update!(status: 'running', started_at: started_at)
   end
 
+  # Idempotent terminal transition. The guard against `canceled` exists so
+  # that when AbortService and the runner thread race (the runner observes
+  # the dead PID a few ms after we marked the row canceled), we don't
+  # overwrite the canceled state with `failed`. The reload re-checks the
+  # latest persisted status before deciding whether to update.
   def mark_finished!(exit_code:, finished_at: Time.current)
-    status = exit_code.to_i.zero? ? 'success' : 'failed'
-    update!(status: status, exit_code: exit_code, finished_at: finished_at)
+    reload
+    return self if STATUSES.include?(status) && !ACTIVE_STATUSES.include?(status)
+
+    new_status = exit_code.to_i.zero? ? 'success' : 'failed'
+    update!(status: new_status, exit_code: exit_code, finished_at: finished_at)
   end
 
   def append_log!(chunk)
@@ -50,6 +58,7 @@ class Deploy < ApplicationRecord
       command: command,
       status: status,
       exit_code: exit_code,
+      pid: pid,
       triggered_by: triggered_by,
       started_at: started_at,
       finished_at: finished_at,

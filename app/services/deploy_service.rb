@@ -125,7 +125,8 @@ class DeployService
 
   def execute_runner
     runner = @runner_class.new(
-      app: @app, env: @env, branch: @branch, command: @command, app_config: @app_config
+      app: @app, env: @env, branch: @branch, command: @command, app_config: @app_config,
+      on_spawn: ->(pid) { persist_pid(pid) }
     )
     @deploy.mark_running!
 
@@ -136,6 +137,17 @@ class DeployService
   rescue CommandRunner::Error => e
     emit(:error, message: e.message)
     1
+  end
+
+  # Persists the spawned PID so a sibling request to `POST /deploys/:id/abort`
+  # can signal the right process group. update_columns avoids touching
+  # `updated_at` (this is operational metadata, not a domain change) and
+  # skips validations/callbacks (the deploy is already valid, we just need
+  # the PID landed before the abort endpoint can possibly look at it).
+  def persist_pid(pid)
+    return unless @deploy
+
+    @deploy.update_columns(pid: pid)
   end
 
   def finalize_on_error(error)

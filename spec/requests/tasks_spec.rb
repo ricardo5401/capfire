@@ -237,7 +237,10 @@ RSpec.describe 'POST /tasks', type: :request do
       expect(body['log']).to include('line1')
     end
 
-    it 'returns 404 when the task run was triggered by someone else' do
+    # Policy change: tokens with any grant on the app see all runs on it,
+    # including someone else's. This is the team-visibility feature; the
+    # tradeoff is that logs are no longer per-user-private.
+    it 'returns the run from another user when the token has a grant on the app' do
       run = TaskRun.create!(
         app: app_name, env: env, task_name: 'reindex',
         branch: branch, status: 'success',
@@ -246,12 +249,31 @@ RSpec.describe 'POST /tasks', type: :request do
 
       get "/tasks/#{run.id}", headers: auth_headers(grants: default_grants)
 
-      expect(response).to have_http_status(:not_found)
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body['id']).to eq(run.id)
+    end
+
+    it 'returns 403 when the token has no grant on the run app' do
+      run = TaskRun.create!(
+        app: 'other-app', env: env, task_name: 'reindex',
+        branch: branch, status: 'success',
+        triggered_by: 'someone-else'
+      )
+
+      get "/tasks/#{run.id}", headers: auth_headers(grants: default_grants)
+
+      expect(response).to have_http_status(:forbidden)
     end
   end
 
   describe 'GET /tasks (index)' do
-    it 'lists only task runs triggered by the caller' do
+    # The streaming-mode tests above can spawn a background thread that
+    # creates TaskRun rows OUTSIDE the spec's transaction (see Runnable
+    # concern). Truncate before the index assertions so those leaked
+    # rows don't pollute the visible-set checks.
+    before { TaskRun.delete_all }
+
+    it 'defaults to only task runs triggered by the caller (mine scope)' do
       mine = TaskRun.create!(
         app: app_name, env: env, task_name: 'reindex',
         branch: branch, status: 'success',
@@ -266,8 +288,44 @@ RSpec.describe 'POST /tasks', type: :request do
       get '/tasks', headers: auth_headers(grants: default_grants)
 
       expect(response).to have_http_status(:ok)
-      ids = response.parsed_body['task_runs'].map { |t| t['id'] }
+      body = response.parsed_body
+      ids = body['task_runs'].map { |t| t['id'] }
       expect(ids).to contain_exactly(mine.id)
+      expect(body['scope']).to eq('mine')
+      # Hint surfaces the --all flag so users discover team visibility.
+      expect(body['hint']).to be_present
+    end
+
+    it 'with ?all=true lists every run on apps the token has access to' do
+      mine = TaskRun.create!(
+        app: app_name, env: env, task_name: 'reindex',
+        branch: branch, status: 'success',
+        triggered_by: 'spec-user'
+      )
+      teammate = TaskRun.create!(
+        app: app_name, env: env, task_name: 'backfill',
+        branch: branch, status: 'success',
+        triggered_by: 'someone-else'
+      )
+      TaskRun.create!(
+        app: 'unrelated-app', env: env, task_name: 'reindex',
+        branch: branch, status: 'success',
+        triggered_by: 'someone-else'
+      )
+
+      get '/tasks', params: { all: 'true' }, headers: auth_headers(grants: default_grants)
+
+      body = response.parsed_body
+      ids = body['task_runs'].map { |t| t['id'] }
+      expect(ids).to contain_exactly(mine.id, teammate.id)
+      expect(body['scope']).to eq('all')
+      expect(body['hint']).to be_nil
+    end
+
+    it 'rejects ?app= filtering for an app the token cannot see in --all mode' do
+      get '/tasks', params: { all: 'true', app: 'unrelated-app' },
+                    headers: auth_headers(grants: default_grants)
+      expect(response).to have_http_status(:forbidden)
     end
 
     it 'filters by task name when ?task= is given' do

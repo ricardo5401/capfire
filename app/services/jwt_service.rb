@@ -2,6 +2,7 @@
 
 require 'jwt'
 require 'securerandom'
+require 'set'
 
 # Encodes, decodes and validates Capfire API tokens.
 #
@@ -98,6 +99,36 @@ class JwtService
       else
         legacy_claims_to_grants(claims)
       end
+    end
+
+    # Returns the set of app slugs the token has ANY grant on. Drives the
+    # "list anything I have access to" semantics of `GET /deploys?all=true`
+    # and `GET /tasks?all=true` — if a token can do anything on `udoczcom`,
+    # it can also see deploys/tasks of `udoczcom` regardless of which env
+    # or cmd was granted.
+    #
+    # Returns the special string `"*"` (the WILDCARD constant) when ANY
+    # grant uses `app: "*"`. Callers should treat that as "all apps" and
+    # skip the filter altogether — Set#include?(WILDCARD) catches it
+    # explicitly so we don't accidentally `WHERE app IN ("*")`.
+    def visible_apps(claims)
+      grants = grants_from_claims(claims)
+      apps = grants.map { |g| g['app'] }.compact.uniq
+      return Set.new([ WILDCARD ]) if apps.include?(WILDCARD)
+
+      Set.new(apps)
+    end
+
+    # True when the caller's token holds `cmd: "abort"` (or the global
+    # wildcard) on the given app+env. Owners of a deploy/task — those
+    # whose `sub` claim matches `triggered_by` — can always abort their
+    # own runs without needing this grant; this method only governs
+    # aborting OTHER people's work.
+    def can_abort?(claims:, app:, env:)
+      authorize!(claims: claims, app: app, env: env, cmd: 'abort')
+      true
+    rescue Unauthorized
+      false
     end
 
     private

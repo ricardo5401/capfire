@@ -14,13 +14,15 @@ client does under the hood.
 |---|---|---|
 | `GET` | `/healthz` | Liveness probe. No auth. |
 | `GET` | `/tokens/me` | Introspect the bearer token. |
-| `GET` | `/deploys` | List deploys you triggered (mine-only). |
+| `GET` | `/deploys` | List deploys (yours by default; `?all=true` for the team's). |
 | `POST` | `/deploys` | Start a deploy (SSE or async). |
 | `GET` | `/deploys/:id` | Full status + log of one deploy. |
+| `POST` | `/deploys/:id/abort` | Cancel a running deploy. |
 | `POST` | `/commands` | Run restart / rollback / status. |
-| `GET` | `/tasks` | List task runs you triggered (mine-only). |
+| `GET` | `/tasks` | List task runs (yours by default; `?all=true` for the team's). |
 | `POST` | `/tasks` | Run a custom task (SSE or async). |
 | `GET` | `/tasks/:id` | Full status + log of one task run. |
+| `POST` | `/tasks/:id/abort` | Cancel a running task. |
 | `POST` | `/lb/drain` | Drain this node out of the LB pool. |
 | `POST` | `/lb/restore` | Re-enable this node in the LB pool. |
 
@@ -58,20 +60,28 @@ the local `api_tokens` table — unusual; typically happens during DB restores.
 
 ## `GET /deploys`
 
-Lists deploys triggered by the current token holder (matched via `sub`
-claim → `triggered_by` column). You never see deploys of other users.
+By default lists deploys triggered by the current token holder (matched
+via `sub` claim → `triggered_by` column). With `?all=true`, lists every
+deploy on apps the token has any grant on — that's how a teammate sees
+your in-flight deploy without being the original triggerer.
 
 ```bash
+# Default: just yours
 curl -s -H "Authorization: Bearer $TOKEN" \
   "https://capfire.example.com/deploys?active=true&app=myapp&limit=50"
+
+# Team scope: anyone's deploys on apps you have access to
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://capfire.example.com/deploys?all=true&active=true"
 ```
 
 Query parameters (all optional):
 
 | Param | Values | Default |
 |---|---|---|
+| `all` | `true` / `false` — switch from "mine" to "anything I can see" | `false` |
 | `active` | `true` / `false` | `false` |
-| `app` | app name | any |
+| `app` | app name (validated against visible apps in `?all=true` mode) | any |
 | `env` | env name | any |
 | `status` | `pending` / `running` / `success` / `failed` / `canceled` | any |
 | `limit` | 1–100 | 20 |
@@ -89,14 +99,22 @@ Response:
       "command": "deploy",
       "status": "success",
       "exit_code": 0,
+      "pid": null,
       "triggered_by": "admin",
       "started_at": "2026-04-24T15:11:00Z",
       "finished_at": "2026-04-24T15:13:42Z",
       "duration_seconds": 162
     }
-  ]
+  ],
+  "scope": "mine",
+  "hint": "showing only your deploys; pass `all=true` to see every deploy on apps you have access to"
 }
 ```
+
+`hint` is only present when `?all=true` is NOT set — it's the
+discoverability mechanism for the team-visibility feature. `scope` is
+always `"mine"` or `"all"` so clients can branch on it without parsing
+the hint string.
 
 ## `POST /deploys`
 
@@ -213,8 +231,80 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   https://capfire.example.com/deploys/137
 ```
 
+Visible to:
+
+- the original triggerer (always), or
+- any caller whose token has at least one grant on the deploy's app
+  (same rule as `?all=true` on the index).
+
+Returns 403 when the token has no grant on the app, 404 when the deploy
+doesn't exist.
+
 Same JSON shape as the items in `GET /deploys`, plus a `log` key with the
 raw captured output.
+
+## `POST /deploys/:id/abort`
+
+Cancels a running deploy. Signals the deploy's process group with
+SIGTERM, waits 10 seconds, then escalates to SIGKILL if the process
+hasn't exited. Idempotent: aborting an already-finished deploy returns
+200 with `abort_status="already_finished"`.
+
+```bash
+curl -X POST https://capfire.example.com/deploys/137/abort \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"wrong branch"}'
+```
+
+Request body (all optional):
+
+| Field | Notes |
+|---|---|
+| `reason` | Human-readable note appended to the deploy's audit log line |
+
+Authorization: the deploy's original triggerer can always abort. Anyone
+else needs `cmd: "abort"` on the deploy's app+env (or the global `*`
+wildcard).
+
+Response (200):
+
+```json
+{
+  "id": 137,
+  "app": "myapp",
+  "env": "production",
+  "branch": "master",
+  "command": "deploy",
+  "status": "canceled",
+  "exit_code": 143,
+  "pid": 25842,
+  "triggered_by": "admin",
+  "started_at": "2026-04-24T15:11:00Z",
+  "finished_at": "2026-04-24T15:11:42Z",
+  "duration_seconds": 42,
+  "abort_status": "canceled",
+  "abort_exit_code": 143
+}
+```
+
+The `abort_exit_code` field reveals what happened on the OS side:
+
+| Code | Meaning |
+|---|---|
+| `143` | Process exited cleanly within the 10s grace period (SIGTERM, 128+15) |
+| `137` | Had to escalate to SIGKILL after the grace period (128+9) |
+| `-1` | No live process — the row was an orphan lock (Puma restart, or aborted before the spawn). DB transition still applied. |
+
+When the deploy is already terminal:
+
+```json
+{
+  "id": 137,
+  "status": "success",
+  "abort_status": "already_finished"
+}
+```
 
 ## `POST /commands`
 
@@ -257,20 +347,22 @@ the HTTP surface only.
 
 ### `GET /tasks`
 
-Lists task runs triggered by the current token holder. Same privacy
-posture as `/deploys`.
+Same scoping rules as `GET /deploys`: defaults to "yours only", flips to
+"every task run on apps you can see" with `?all=true`. Response includes
+the same `scope`/`hint` metadata.
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "https://capfire.example.com/tasks?active=true&app=pyworker&limit=50"
+  "https://capfire.example.com/tasks?all=true&active=true&app=pyworker&limit=50"
 ```
 
 Query parameters (all optional):
 
 | Param | Values | Default |
 |---|---|---|
+| `all` | `true` / `false` | `false` |
 | `active` | `true` / `false` | `false` |
-| `app` | app name | any |
+| `app` | app name (validated against visible apps in `?all=true` mode) | any |
 | `env` | env name | any |
 | `task` | task name | any |
 | `status` | `pending` / `running` / `success` / `failed` / `canceled` | any |
@@ -416,6 +508,24 @@ shape as the items in `GET /tasks`, plus a `log` key with the raw output.
 curl -s -H "Authorization: Bearer $TOKEN" \
   https://capfire.example.com/tasks/87
 ```
+
+Same visibility rule as `GET /deploys/:id`: triggerer always, otherwise
+any token with a grant on the task's app.
+
+### `POST /tasks/:id/abort`
+
+Cancels a running task. Same kill protocol, same auth rules, same
+response shape as `POST /deploys/:id/abort`.
+
+```bash
+curl -X POST https://capfire.example.com/tasks/87/abort \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"wrong since= argument"}'
+```
+
+See the deploys-abort section above for the full body, auth, and
+`abort_exit_code` semantics.
 
 ## `POST /lb/drain` and `POST /lb/restore`
 

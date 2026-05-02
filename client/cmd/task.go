@@ -16,6 +16,7 @@ var (
 	taskShowLog bool
 	taskTail    int
 	taskActive  bool
+	taskAll     bool
 	taskApp     string
 	taskEnvFlag string
 	taskName    string
@@ -24,15 +25,17 @@ var (
 
 var taskCmd = &cobra.Command{
 	Use:   "task [TASK_RUN_ID]",
-	Short: "Show status of a task run (or list your active tasks)",
-	Long: `Without arguments: lists task runs you triggered that are currently pending
-or running, similar to ` + "`capfire status`" + ` but for tasks.
+	Short: "Show status of a task run (or list active tasks)",
+	Long: `Without arguments: lists task runs from your token's scope. Default scope
+is "yours" (matched on JWT ` + "`sub`" + `). Pass --all to see every task on apps
+you have any permission on — same visibility rule as ` + "`capfire deployments`" + `.
 
 With a task_run id: fetches full status + exit code, and optionally prints
 the captured log (--log, --tail).
 
 Examples:
   capfire task                          # list your active tasks
+  capfire task --all                    # list active tasks from your team
   capfire task --app pyworker           # filter the list
   capfire task 87                       # detail of one
   capfire task 87 --log --tail 200`,
@@ -44,6 +47,7 @@ func init() {
 	taskCmd.Flags().BoolVar(&taskShowLog, "log", false, "Print the task run log (only when TASK_RUN_ID is given)")
 	taskCmd.Flags().IntVar(&taskTail, "tail", 100, "Number of log lines to show when --log is set (0 = all)")
 	taskCmd.Flags().BoolVar(&taskActive, "active", true, "Filter the list to active runs only (no effect with TASK_RUN_ID)")
+	taskCmd.Flags().BoolVar(&taskAll, "all", false, "Show task runs from every app you have access to (not just yours)")
 	taskCmd.Flags().StringVar(&taskApp, "app", "", "Filter list by app")
 	taskCmd.Flags().StringVar(&taskEnvFlag, "env", "", "Filter list by env")
 	taskCmd.Flags().StringVar(&taskName, "task", "", "Filter list by task name")
@@ -72,7 +76,8 @@ func runTask(_ *cobra.Command, args []string) error {
 }
 
 func listTaskRuns(ctx context.Context, client *api.Client) error {
-	tasks, err := client.ListTasks(ctx, api.ListTasksParams{
+	list, err := client.ListTasks(ctx, api.ListTasksParams{
+		All:    taskAll,
 		Active: taskActive,
 		App:    taskApp,
 		Env:    taskEnvFlag,
@@ -82,11 +87,13 @@ func listTaskRuns(ctx context.Context, client *api.Client) error {
 	if err != nil {
 		return err
 	}
-	if len(tasks) == 0 {
+	if len(list.TaskRuns) == 0 {
 		ui.Infof("No matching task runs for this token.")
+		printScopeHint(list.Hint)
 		return nil
 	}
-	printTaskRunTable(tasks)
+	printTaskRunTable(list.TaskRuns)
+	printScopeHint(list.Hint)
 	return nil
 }
 

@@ -137,7 +137,8 @@ class TaskService
     runner = @runner_class.new(
       app: @app, env: @env, branch: @branch,
       command: @task_name, app_config: @app_config,
-      command_string: command_string
+      command_string: command_string,
+      on_spawn: ->(pid) { persist_pid(pid) }
     )
     @task_run.mark_running!
 
@@ -148,6 +149,14 @@ class TaskService
   rescue CommandRunner::Error, AppConfig::Error => e
     emit(:error, message: e.message)
     1
+  end
+
+  # Persists the spawned PID so `POST /tasks/:id/abort` can signal the
+  # right process group. Same rationale as DeployService#persist_pid.
+  def persist_pid(pid)
+    return unless @task_run
+
+    @task_run.update_columns(pid: pid)
   end
 
   def finalize_on_error(error)

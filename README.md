@@ -32,6 +32,12 @@ Capfire is the smallest thing that fixes that:
 - The same yaml declares `tasks:` — arbitrary remote commands (reindexes,
   backfills, the built-in `sync`) with their own per-app concurrency lock,
   triggerable from `capfire run`.
+- Stuck deploys and tasks are recoverable: `capfire abort deploy ID` (or
+  `task ID`) signals the process group, escalates SIGTERM → SIGKILL, and
+  releases the lock. Owners can always abort their own runs; teammates
+  with `cmd: "abort"` can rescue someone else's hung process. Index and
+  show endpoints accept `?all=true` so the team sees each other's
+  in-flight work, not just their own.
 
 Opinionated in all the right places, thin everywhere else.
 
