@@ -39,12 +39,13 @@ type TaskRun struct {
 	AbortExitCode *int   `json:"abort_exit_code,omitempty"`
 }
 
-// TaskRunList mirrors `GET /tasks`. Carries the same `scope`/`hint`
-// metadata as DeployList — see DeployList for rationale.
+// TaskRunList mirrors `GET /tasks`. Carries the same `scope`/`hint`/
+// `pagination` metadata as DeployList — see DeployList for rationale.
 type TaskRunList struct {
-	TaskRuns []TaskRun `json:"task_runs"`
-	Scope    string    `json:"scope,omitempty"`
-	Hint     string    `json:"hint,omitempty"`
+	TaskRuns   []TaskRun   `json:"task_runs"`
+	Scope      string      `json:"scope,omitempty"`
+	Hint       string      `json:"hint,omitempty"`
+	Pagination *Pagination `json:"pagination,omitempty"`
 }
 
 // TaskAsyncAck is the 202 payload returned by async task runs.
@@ -126,15 +127,17 @@ func IsBusy(err error) (*BusyError, bool) {
 }
 
 // ListTasksParams filters /tasks index. See ListDeploysParams for the
-// `All` flag rationale — same semantics on tasks.
+// `All` flag and pagination rationale — same semantics on tasks.
 type ListTasksParams struct {
-	All    bool
-	Active bool
-	App    string
-	Env    string
-	Task   string
-	Status string
-	Limit  int
+	All     bool
+	Active  bool
+	App     string
+	Env     string
+	Task    string
+	Status  string
+	Page    int
+	PerPage int
+	Limit   int
 }
 
 func (p ListTasksParams) values() url.Values {
@@ -156,6 +159,12 @@ func (p ListTasksParams) values() url.Values {
 	}
 	if p.Status != "" {
 		q.Set("status", p.Status)
+	}
+	if p.Page > 0 {
+		q.Set("page", fmt.Sprintf("%d", p.Page))
+	}
+	if p.PerPage > 0 {
+		q.Set("per_page", fmt.Sprintf("%d", p.PerPage))
 	}
 	if p.Limit > 0 {
 		q.Set("limit", fmt.Sprintf("%d", p.Limit))
