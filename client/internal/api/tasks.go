@@ -24,6 +24,7 @@ type TaskRun struct {
 	Args            map[string]string `json:"args"`
 	Status          string            `json:"status"`
 	ExitCode        *int              `json:"exit_code"`
+	PID             *int              `json:"pid"`
 	TriggeredBy     string            `json:"triggered_by"`
 	StartedAt       string            `json:"started_at"`
 	FinishedAt      string            `json:"finished_at"`
@@ -31,11 +32,19 @@ type TaskRun struct {
 
 	// Only present on `show` responses.
 	Log string `json:"log,omitempty"`
+
+	// Only present on POST /tasks/:id/abort responses. Same semantics as
+	// Deploy.AbortStatus / Deploy.AbortExitCode.
+	AbortStatus   string `json:"abort_status,omitempty"`
+	AbortExitCode *int   `json:"abort_exit_code,omitempty"`
 }
 
-// TaskRunList mirrors `GET /tasks`.
+// TaskRunList mirrors `GET /tasks`. Carries the same `scope`/`hint`
+// metadata as DeployList — see DeployList for rationale.
 type TaskRunList struct {
 	TaskRuns []TaskRun `json:"task_runs"`
+	Scope    string    `json:"scope,omitempty"`
+	Hint     string    `json:"hint,omitempty"`
 }
 
 // TaskAsyncAck is the 202 payload returned by async task runs.
@@ -116,8 +125,10 @@ func IsBusy(err error) (*BusyError, bool) {
 	return nil, false
 }
 
-// ListTasksParams filters /tasks index.
+// ListTasksParams filters /tasks index. See ListDeploysParams for the
+// `All` flag rationale — same semantics on tasks.
 type ListTasksParams struct {
+	All    bool
 	Active bool
 	App    string
 	Env    string
@@ -128,6 +139,9 @@ type ListTasksParams struct {
 
 func (p ListTasksParams) values() url.Values {
 	q := url.Values{}
+	if p.All {
+		q.Set("all", "true")
+	}
 	if p.Active {
 		q.Set("active", "true")
 	}
@@ -149,13 +163,15 @@ func (p ListTasksParams) values() url.Values {
 	return q
 }
 
-// ListTasks fetches task runs triggered by the current token holder.
-func (c *Client) ListTasks(ctx context.Context, params ListTasksParams) ([]TaskRun, error) {
+// ListTasks fetches task runs visible to the current token holder. Returns
+// the full TaskRunList so callers can surface the server's hint about
+// `--all`.
+func (c *Client) ListTasks(ctx context.Context, params ListTasksParams) (*TaskRunList, error) {
 	var list TaskRunList
 	if err := c.getJSON(ctx, "/tasks", params.values(), &list); err != nil {
 		return nil, err
 	}
-	return list.TaskRuns, nil
+	return &list, nil
 }
 
 // GetTask fetches a single task run by id, including its full log.
@@ -163,6 +179,21 @@ func (c *Client) GetTask(ctx context.Context, id int) (*TaskRun, error) {
 	var t TaskRun
 	path := fmt.Sprintf("/tasks/%d", id)
 	if err := c.getJSON(ctx, path, nil, &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// AbortTask fires POST /tasks/:id/abort. Same shape and semantics as
+// Client.AbortDeploy.
+func (c *Client) AbortTask(ctx context.Context, id int, reason string) (*TaskRun, error) {
+	body := map[string]string{}
+	if reason != "" {
+		body["reason"] = reason
+	}
+	var t TaskRun
+	path := fmt.Sprintf("/tasks/%d/abort", id)
+	if err := c.postJSON(ctx, path, nil, body, &t); err != nil {
 		return nil, err
 	}
 	return &t, nil

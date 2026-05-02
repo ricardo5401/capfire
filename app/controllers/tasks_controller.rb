@@ -32,29 +32,20 @@ class TasksController < ApplicationController
 
   # GET /tasks
   #
-  # Lists task runs triggered by the current token holder. Mirrors the
-  # privacy posture of /deploys#index — never expose runs from other users.
+  # Same scoping rules as DeploysController#index:
+  #   - default: only task runs triggered by the caller (`mine`).
+  #   - `?all=true`: every task run on apps the caller has visibility on
+  #     (any grant on the app puts it in scope).
+  #
+  # See DeploysController#index for the rationale on the `?all` flag and
+  # the `hint` returned when it's not requested.
   def index
-    scope = TaskRun.where(triggered_by: current_claims[:sub]).recent
-    scope = scope.active if truthy?(params[:active])
-
-    if params[:app].present?
-      scope = scope.where(app: safe_identifier!(params[:app], as: 'app', pattern: APP_PATTERN))
-    end
-    if params[:env].present?
-      scope = scope.where(env: safe_identifier!(params[:env], as: 'env', pattern: ENV_PATTERN))
-    end
-    if params[:task].present?
-      scope = scope.where(task_name: safe_task_name!(params[:task]))
-    end
-    if params[:status].present?
-      raise InvalidParameter, 'invalid status' unless TaskRun::STATUSES.include?(params[:status])
-
-      scope = scope.where(status: params[:status])
-    end
-
+    all_mode = truthy?(params[:all])
+    scope = build_index_scope(all_mode: all_mode)
+    scope = apply_index_filters(scope, all_mode: all_mode)
     scope = scope.limit(parse_limit(params[:limit]))
-    render(json: { task_runs: scope.map(&:as_status_json) })
+
+    render(json: index_payload(scope, all_mode: all_mode))
   end
 
   # POST /tasks
@@ -108,17 +99,108 @@ class TasksController < ApplicationController
 
   # GET /tasks/:id
   #
-  # Same privacy rule as /deploys/:id: only the original triggerer can read
-  # the log. Drives the CLI's `--wait` polling and the standalone tracking
-  # use case.
+  # Visible to:
+  #   - the original triggerer (always), or
+  #   - any caller whose token has a grant on the task's app.
+  # Same posture as DeploysController#show — anyone with rights over the
+  # app sees the task run including its log.
   def show
-    task_run = TaskRun.find_by(id: params[:id], triggered_by: current_claims[:sub])
+    task_run = TaskRun.find_by(id: params[:id])
     return render(json: { error: 'not_found' }, status: :not_found) unless task_run
+    return render_forbidden_visibility unless can_view?(task_run)
 
     render(json: task_run.as_status_json.merge(log: task_run.log))
   end
 
+  # POST /tasks/:id/abort
+  #
+  # Same auth/dispatch shape as DeploysController#abort. AbortService is
+  # kind-agnostic (works with both Deploy and TaskRun), so this action is
+  # essentially a thin parallel of the deploys version.
+  def abort
+    task_run = TaskRun.find_by(id: params[:id])
+    return render(json: { error: 'not_found' }, status: :not_found) unless task_run
+
+    authorize_abort!(task_run)
+
+    result = AbortService.new(
+      record: task_run,
+      requested_by: current_claims[:sub],
+      reason: params[:reason].presence
+    ).call
+
+    render_abort_result(result)
+  end
+
   private
+
+  def can_view?(task_run)
+    return true if task_run.triggered_by.present? && task_run.triggered_by == current_claims[:sub]
+
+    visible = JwtService.visible_apps(current_claims)
+    visible.include?(JwtService::WILDCARD) || visible.include?(task_run.app)
+  end
+
+  def render_forbidden_visibility
+    render(
+      json: { error: 'forbidden', message: 'token has no access to this app' },
+      status: :forbidden
+    )
+  end
+
+  def build_index_scope(all_mode:)
+    return TaskRun.recent.where(triggered_by: current_claims[:sub]) unless all_mode
+
+    visible = JwtService.visible_apps(current_claims)
+    return TaskRun.recent if visible.include?(JwtService::WILDCARD)
+
+    TaskRun.recent.where(app: visible.to_a)
+  end
+
+  def apply_index_filters(scope, all_mode:)
+    scope = scope.active if truthy?(params[:active])
+
+    if params[:app].present?
+      app = safe_identifier!(params[:app], as: 'app', pattern: APP_PATTERN)
+      raise_if_app_not_visible!(app) if all_mode
+      scope = scope.where(app: app)
+    end
+
+    if params[:env].present?
+      scope = scope.where(env: safe_identifier!(params[:env], as: 'env', pattern: ENV_PATTERN))
+    end
+
+    if params[:task].present?
+      scope = scope.where(task_name: safe_task_name!(params[:task]))
+    end
+
+    if params[:status].present?
+      raise InvalidParameter, 'invalid status' unless TaskRun::STATUSES.include?(params[:status])
+
+      scope = scope.where(status: params[:status])
+    end
+
+    scope
+  end
+
+  def raise_if_app_not_visible!(app)
+    visible = JwtService.visible_apps(current_claims)
+    return if visible.include?(JwtService::WILDCARD) || visible.include?(app)
+
+    raise JwtService::Unauthorized, "token has no access to app=#{app}"
+  end
+
+  def index_payload(scope, all_mode:)
+    payload = {
+      task_runs: scope.map(&:as_status_json),
+      scope: all_mode ? 'all' : 'mine'
+    }
+    unless all_mode
+      payload[:hint] = 'showing only your task runs; pass `all=true` to see ' \
+                       'every task on apps you have access to'
+    end
+    payload
+  end
 
   def build_service(app:, env:, task:, branch:, args:, app_config:)
     TaskService.new(

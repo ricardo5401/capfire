@@ -15,6 +15,7 @@ type Deploy struct {
 	Command         string `json:"command"`
 	Status          string `json:"status"`
 	ExitCode        *int   `json:"exit_code"`
+	PID             *int   `json:"pid"`
 	TriggeredBy     string `json:"triggered_by"`
 	StartedAt       string `json:"started_at"`
 	FinishedAt      string `json:"finished_at"`
@@ -22,11 +23,23 @@ type Deploy struct {
 
 	// Only present on `show` responses.
 	Log string `json:"log,omitempty"`
+
+	// Only present on POST /deploys/:id/abort responses. Carries the
+	// final outcome ("canceled" or "already_finished") plus the exit
+	// code AbortService landed on (143/137/-1, see server-side service
+	// for semantics).
+	AbortStatus   string `json:"abort_status,omitempty"`
+	AbortExitCode *int   `json:"abort_exit_code,omitempty"`
 }
 
-// DeployList mirrors `GET /deploys`.
+// DeployList mirrors `GET /deploys`. The server now returns a `scope`
+// marker ("mine" or "all") and an optional `hint` string telling users
+// about the `--all` flag — both surfaced verbatim by the CLI so the
+// behavior is discoverable without reading docs.
 type DeployList struct {
 	Deploys []Deploy `json:"deploys"`
+	Scope   string   `json:"scope,omitempty"`
+	Hint    string   `json:"hint,omitempty"`
 }
 
 // AsyncAck is the 202 payload returned by async deploys/commands.
@@ -42,7 +55,12 @@ type AsyncAck struct {
 }
 
 // ListDeploysParams filters the /deploys index endpoint.
+//
+// `All` flips the server-side scope from "deploys I triggered" to "deploys
+// on every app I have any grant on" — that's how a teammate sees your
+// in-flight deploy. Default is the conservative "mine only" scope.
 type ListDeploysParams struct {
+	All    bool
 	Active bool
 	App    string
 	Env    string
@@ -52,6 +70,9 @@ type ListDeploysParams struct {
 
 func (p ListDeploysParams) values() url.Values {
 	q := url.Values{}
+	if p.All {
+		q.Set("all", "true")
+	}
 	if p.Active {
 		q.Set("active", "true")
 	}
@@ -70,13 +91,41 @@ func (p ListDeploysParams) values() url.Values {
 	return q
 }
 
-// ListDeploys fetches deploys triggered by the current token holder.
-func (c *Client) ListDeploys(ctx context.Context, params ListDeploysParams) ([]Deploy, error) {
+// ListDeploys fetches deploys visible to the current token holder. With
+// `params.All == false` (default), this is "deploys you triggered". With
+// `params.All == true`, this is "deploys on apps you can see".
+//
+// Returns the full DeployList (not just the slice) so callers can surface
+// the server's `hint` to the user — that's the discoverability mechanism
+// for the new `--all` flag.
+func (c *Client) ListDeploys(ctx context.Context, params ListDeploysParams) (*DeployList, error) {
 	var list DeployList
 	if err := c.getJSON(ctx, "/deploys", params.values(), &list); err != nil {
 		return nil, err
 	}
-	return list.Deploys, nil
+	return &list, nil
+}
+
+// AbortDeploy fires POST /deploys/:id/abort.
+//
+// `reason` is optional and is appended to the deploy's audit log line so
+// "why was this killed" is visible to anyone reading the log later.
+//
+// Returns the updated Deploy with `AbortStatus` set. A 200 with
+// `abort_status="already_finished"` means the deploy was no longer active
+// — we treat it as success because the caller's intent ("stop this thing")
+// is satisfied either way.
+func (c *Client) AbortDeploy(ctx context.Context, id int, reason string) (*Deploy, error) {
+	body := map[string]string{}
+	if reason != "" {
+		body["reason"] = reason
+	}
+	var d Deploy
+	path := fmt.Sprintf("/deploys/%d/abort", id)
+	if err := c.postJSON(ctx, path, nil, body, &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
 }
 
 // GetDeploy fetches a single deploy by id, including its full log.

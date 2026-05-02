@@ -24,10 +24,15 @@ class ApplicationController < ActionController::API
 
   attr_reader :current_claims
 
-  rescue_from JwtService::Unauthorized, with: :render_forbidden
-  rescue_from JwtService::Error, with: :render_unauthorized
+  # Rails resolves `rescue_from` in REVERSE order — last declared wins.
+  # `JwtService::Unauthorized < JwtService::Error`, so `Unauthorized`
+  # MUST come last to make sure 403 wins over 401 when authorization
+  # (not authentication) is the failure mode. Inverting these silently
+  # turns every "you can't do this" into "your token is invalid".
   rescue_from ActionController::ParameterMissing, with: :render_bad_request
   rescue_from InvalidParameter, with: :render_bad_request
+  rescue_from JwtService::Error, with: :render_unauthorized
+  rescue_from JwtService::Unauthorized, with: :render_forbidden
 
   private
 

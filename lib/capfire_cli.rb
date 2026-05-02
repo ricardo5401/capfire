@@ -10,4 +10,5 @@ module CapfireCli
   autoload :ProjectCommand, 'capfire_cli/project_command'
   autoload :ServiceCommand, 'capfire_cli/service_command'
   autoload :ConfigCommand, 'capfire_cli/config_command'
+  autoload :AbortCommand, 'capfire_cli/abort_command'
 end

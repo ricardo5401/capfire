@@ -138,6 +138,78 @@ RSpec.describe JwtService do
     end
   end
 
+  describe '.visible_apps' do
+    it 'returns the union of app slugs across grants' do
+      claims = described_class.decode!(
+        encode_token(grants: [
+          { app: 'pyworker',  envs: [ 'production' ], cmds: [ 'deploy' ] },
+          { app: 'udoczcom',  envs: [ 'staging' ],    cmds: [ 'deploy' ] },
+          { app: 'pyworker',  envs: [ 'staging' ],    cmds: [ 'deploy' ] }
+        ])
+      )
+
+      expect(described_class.visible_apps(claims)).to eq(Set.new(%w[pyworker udoczcom]))
+    end
+
+    it 'collapses to the wildcard set when any grant uses app=*' do
+      claims = described_class.decode!(
+        encode_token(grants: [
+          { app: 'pyworker', envs: [ 'production' ], cmds: [ 'deploy' ] },
+          { app: '*',        envs: [ '*' ],          cmds: [ '*' ] }
+        ])
+      )
+
+      visible = described_class.visible_apps(claims)
+      expect(visible).to include(JwtService::WILDCARD)
+    end
+
+    it 'returns an empty set for claims without any grant' do
+      expect(described_class.visible_apps({})).to eq(Set.new)
+    end
+  end
+
+  describe '.can_abort?' do
+    let(:abort_grant_claims) do
+      described_class.decode!(
+        encode_token(grants: [
+          { app: 'pyworker', envs: [ 'production' ], cmds: [ 'abort' ] }
+        ])
+      )
+    end
+
+    let(:wildcard_claims) do
+      described_class.decode!(
+        encode_token(grants: [
+          { app: 'pyworker', envs: [ '*' ], cmds: [ '*' ] }
+        ])
+      )
+    end
+
+    let(:deploy_only_claims) do
+      described_class.decode!(
+        encode_token(grants: [
+          { app: 'pyworker', envs: [ 'production' ], cmds: [ 'deploy' ] }
+        ])
+      )
+    end
+
+    it 'is true when the token has an explicit cmd:abort grant for the app+env' do
+      expect(described_class.can_abort?(claims: abort_grant_claims, app: 'pyworker', env: 'production')).to be(true)
+    end
+
+    it 'is true under the global wildcard' do
+      expect(described_class.can_abort?(claims: wildcard_claims, app: 'pyworker', env: 'production')).to be(true)
+    end
+
+    it 'is false when the token has access to the app but no abort grant' do
+      expect(described_class.can_abort?(claims: deploy_only_claims, app: 'pyworker', env: 'production')).to be(false)
+    end
+
+    it 'is false for the wrong env even with an abort grant' do
+      expect(described_class.can_abort?(claims: abort_grant_claims, app: 'pyworker', env: 'staging')).to be(false)
+    end
+  end
+
   describe '.grants_from_claims' do
     it 'flattens `tasks:` shorthand into the `cmds:` array' do
       claims = described_class.decode!(

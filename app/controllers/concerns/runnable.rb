@@ -86,4 +86,34 @@ module Runnable
       retry_after_seconds: 600
     }, status: :conflict)
   end
+
+  # Authorization helper for abort endpoints. Returns true when the caller
+  # is the original triggerer (owner-always-can-abort) OR holds
+  # `cmd: "abort"` on the record's app+env. Anything else raises so the
+  # endpoint can `rescue_from JwtService::Unauthorized` uniformly.
+  #
+  # Owner check comes FIRST so a legitimate owner can abort without ever
+  # touching the abort grant. That keeps the most common case (someone
+  # canceling their own stuck deploy) free of token churn — no need to
+  # mint new tokens just to gain `cmd: abort` on every app the user
+  # already deploys to.
+  def authorize_abort!(record)
+    if record.triggered_by.present? && record.triggered_by == current_claims[:sub]
+      return true
+    end
+
+    JwtService.authorize!(
+      claims: current_claims, app: record.app, env: record.env, cmd: 'abort'
+    )
+  end
+
+  # Renders the response payload for an abort call. Shape is identical for
+  # deploys and tasks so the Go client can share parsing code.
+  def render_abort_result(result)
+    payload = result.record.as_status_json.merge(
+      abort_status: result.status.to_s
+    )
+    payload[:abort_exit_code] = result.exit_code if result.exit_code
+    render(json: payload, status: :ok)
+  end
 end

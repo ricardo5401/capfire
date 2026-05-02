@@ -16,7 +16,10 @@ shell scripts and CI.
 | `capfire restart APP ENV` | Restart an app |
 | `capfire run APP ENV TASK` | Run a custom task (sync, reindex, backfill, …) |
 | `capfire status [DEPLOY_ID]` | Show active deploys, or detail one |
-| `capfire deployments` | List your recent deploys (filterable) |
+| `capfire task [TASK_RUN_ID]` | Show active tasks, or detail one |
+| `capfire deployments` | List recent deploys (yours by default; `--all` for the team's) |
+| `capfire abort deploy ID` | Cancel a running deploy |
+| `capfire abort task ID` | Cancel a running task |
 
 Run `capfire <cmd> --help` for full flag reference.
 
@@ -262,25 +265,94 @@ Flags:
 
 ## `capfire deployments`
 
-Lists your recent deploys. Aliases: `capfire deploys`, `capfire list`.
+Lists deploys associated with your token. Aliases: `capfire deploys`,
+`capfire list`.
+
+By default, shows **only what you triggered** (matched on the JWT `sub`
+claim). With `--all`, expands the scope to **every deploy on apps you
+have any permission on** — that's the right flag for "what is my
+teammate deploying right now". The same visibility rule extends to
+`capfire status ID` and `capfire abort deploy ID`: anything you can see
+in this list, you can also inspect or abort (subject to the abort
+permission rules).
+
+When you run without `--all`, the server includes a hint reminding you
+the flag exists. The hint is silenced once you opt in.
 
 ```bash
+# Yours
 capfire deployments
 capfire deployments --app=myapp --limit=50
 capfire deployments --env=production --status=failed
+
+# The team's
+capfire deployments --all
+capfire deployments --all --app=udoczcom --status=running
 ```
 
 Flags:
 
 | Flag | Purpose |
 |---|---|
+| `--all` | Show deploys from every app you have access to |
 | `--app NAME` | Only deploys for this app |
 | `--env NAME` | Only deploys for this env |
 | `--status X` | `pending` / `running` / `success` / `failed` / `canceled` |
 | `--limit N` | Rows to return (default 20, server caps at 100) |
 
-The list is always **your own** deploys (filtered by the `sub` claim of
-your token). You cannot see deploys of other users through the client.
+---
+
+## `capfire abort`
+
+Cancels a running deploy or task. Picks the right kind explicitly because
+deploy IDs and task-run IDs share a numeric space — `capfire abort 42`
+would be ambiguous.
+
+```bash
+capfire abort deploy 137
+capfire abort task 87
+capfire abort deploy 137 --reason "wrong branch"
+```
+
+The server signals the run's process group with SIGTERM, waits 10
+seconds, then escalates to SIGKILL if the process is still alive. The
+record transitions to `canceled` regardless of whether a process was
+actually running (orphan locks from a Puma restart are cleared the same
+way).
+
+Output reflects what happened on the OS side:
+
+```
+$ capfire abort deploy 137
+✓ Deploy #137 canceled (myapp/production deploy)
+  exit code: 143 (SIGTERM — process exited cleanly within grace period)
+
+$ capfire abort task 87
+✓ Task #87 canceled (pyworker/production reindex)
+  exit code: 137 (SIGKILL — had to force-kill after grace period)
+
+$ capfire abort deploy 138        # already finished
+⚠ Deploy #138 was already success — nothing to abort
+
+$ capfire abort task 90           # orphan lock
+✓ Task #90 canceled (pyworker/production backfill)
+  exit code: -1 (no live process — orphan lock cleared)
+```
+
+Permissions:
+
+- You can ALWAYS abort runs you triggered yourself, no special grant
+  needed.
+- To abort someone else's run, your token needs `cmd: "abort"` on the
+  run's app+env (or the global `*` wildcard).
+- If the JWT auth itself is the problem, the server admin can abort
+  locally via `bin/capfire abort deploy ID` (bypasses JWT entirely).
+
+Flags:
+
+| Flag | Purpose |
+|---|---|
+| `--reason TEXT` | Optional. Appended to the run's audit log line |
 
 ---
 

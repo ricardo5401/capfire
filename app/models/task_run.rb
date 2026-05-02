@@ -34,7 +34,14 @@ class TaskRun < ApplicationRecord
     update!(status: 'running', started_at: started_at)
   end
 
+  # Same guard as Deploy#mark_finished!: AbortService may have already
+  # transitioned the record to `canceled` while the runner thread was
+  # still flushing the last log lines. Re-reading the latest status
+  # before updating keeps that abort sticky.
   def mark_finished!(exit_code:, finished_at: Time.current)
+    reload
+    return self if STATUSES.include?(status) && !ACTIVE_STATUSES.include?(status)
+
     new_status = exit_code.to_i.zero? ? 'success' : 'failed'
     update!(status: new_status, exit_code: exit_code, finished_at: finished_at)
   end
@@ -63,6 +70,7 @@ class TaskRun < ApplicationRecord
       args: args,
       status: status,
       exit_code: exit_code,
+      pid: pid,
       triggered_by: triggered_by,
       started_at: started_at,
       finished_at: finished_at,

@@ -20,6 +20,9 @@ module CapfireCli
     desc 'service SUBCOMMAND ...ARGS', 'Manage the Capfire systemd service'
     subcommand 'service', ServiceCommand
 
+    desc 'abort SUBCOMMAND ...ARGS', 'Cancel a running deploy or task (admin, bypasses JWT)'
+    subcommand 'abort', AbortCommand
+
     desc 'config', 'Show current Capfire server configuration (env vars)'
     def config
       ConfigCommand.new.show

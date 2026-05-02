@@ -62,15 +62,17 @@ func runStatus(_ *cobra.Command, args []string) error {
 }
 
 func listActive(ctx context.Context, client *api.Client) error {
-	deploys, err := client.ListDeploys(ctx, api.ListDeploysParams{Active: true, Limit: 20})
+	list, err := client.ListDeploys(ctx, api.ListDeploysParams{Active: true, Limit: 20})
 	if err != nil {
 		return err
 	}
-	if len(deploys) == 0 {
+	if len(list.Deploys) == 0 {
 		ui.Infof("No active deploys for this token.")
+		printScopeHint(list.Hint)
 		return nil
 	}
-	printDeployTable(deploys)
+	printDeployTable(list.Deploys)
+	printScopeHint(list.Hint)
 	return nil
 }
 

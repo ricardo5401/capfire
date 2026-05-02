@@ -29,6 +29,8 @@ so the short form works out of the box.
 | `capfire service restart` | `systemctl restart capfire.service` |
 | `capfire service status` | `systemctl status capfire.service` |
 | `capfire service logs` | `journalctl -u capfire -fn 200` |
+| `capfire abort deploy ID` | Cancel a running deploy (no JWT needed) |
+| `capfire abort task ID` | Cancel a running task (no JWT needed) |
 | `capfire restart` | Alias for `service restart` |
 | `capfire status` | Alias for `service status` |
 | `capfire config` | Print env-var diagnostics (masked secrets) |
@@ -229,3 +231,43 @@ Tokens emitted before the grants redesign carry a flat cartesian shape:
 The server translates them into grants on the fly (one grant per `app`
 listed, with the same `envs`/`cmds`). Old tokens keep working
 indefinitely — no migration required.
+
+---
+
+## `capfire abort` — operator recovery
+
+Cancels a running deploy or task **without going through the JWT auth
+layer**. This is the recovery path for the operator sitting on the box:
+
+- A deploy is hung and there's no token holder with `cmd: abort` on
+  call.
+- Puma was restarted mid-deploy and a row is stuck in `running` with a
+  dead PID (the lock blocks new deploys until it's cleared).
+- The JWT auth itself is the problem — secret rotation, DB issue,
+  whatever.
+
+```bash
+sudo -u capfire capfire abort deploy 137
+sudo -u capfire capfire abort task 87 --reason "wrong since= argument"
+```
+
+Same protocol as the HTTP endpoint: SIGTERM to the process group, 10s
+grace, escalate to SIGKILL, then transition the row to `canceled`. The
+audit log line records `aborted by admin-cli` so it's distinguishable
+from JWT-authenticated aborts.
+
+Exit status:
+
+| Code | Meaning |
+|---|---|
+| 0 | Run was canceled (or was already terminal — idempotent) |
+| 1 | Record id not found |
+
+The exit-code legend printed under the success line matches the HTTP
+client's:
+
+```
+$ sudo -u capfire capfire abort deploy 137
+canceled  Deploy #137 aborted (myapp/production)
+  exit code: 143 (SIGTERM — process exited cleanly within grace period)
+```
