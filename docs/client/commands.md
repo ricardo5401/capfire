@@ -20,6 +20,7 @@ shell scripts and CI.
 | `capfire deployments` | List recent deploys (yours by default; `--all` for the team's) |
 | `capfire abort deploy ID` | Cancel a running deploy |
 | `capfire abort task ID` | Cancel a running task |
+| `capfire version` | Print the build version (or `--check` for live check) |
 
 Run `capfire <cmd> --help` for full flag reference.
 
@@ -353,6 +354,34 @@ Flags:
 | Flag | Purpose |
 |---|---|
 | `--reason TEXT` | Optional. Appended to the run's audit log line |
+
+---
+
+## `capfire version`
+
+Prints the build version. With `--check`, also queries GitHub
+synchronously for the latest release and reports whether you're up to
+date — useful when you want a definitive answer instead of waiting for
+the next 24h cache refresh.
+
+```bash
+capfire version              # capfire version v0.3.0
+capfire version --check      # also hits GitHub Releases
+```
+
+Output of `--check`:
+
+```
+$ capfire version --check
+capfire version v0.3.0
+! a newer release is available: v0.4.0
+Update with: brew upgrade capfire
+```
+
+Note that capfire ALSO prints a one-line "update available" notice on
+stderr at the end of every command (cached for 24h). See
+[Configuration → Update check](config.md#update-check) for opt-out
+options and the cache file location.
 
 ---
 

@@ -19,10 +19,15 @@ Check your resolved path with `capfire config --show`.
 # ~/.config/capfire/config.yml
 host: https://capfire.internal.example.com
 token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiIsImp0aSI6...
+
+# Optional. When false, skip the "is there a new release?" notice that
+# normally appears at the end of every command. Defaults to true.
+update_check: true
 ```
 
-That's it. No sections, no layers. The file is written with mode `0600`
-because it contains a bearer token — keep it that way.
+The `host` and `token` fields are required. `update_check` is optional
+and defaults to enabled. The file is written with mode `0600` because
+it contains a bearer token — keep it that way.
 
 ## Environment variables
 
@@ -30,6 +35,39 @@ because it contains a bearer token — keep it that way.
 |---|---|
 | `CAPFIRE_CONFIG` | Override the resolved config path (highest precedence) |
 | `XDG_CONFIG_HOME` | Base dir per XDG spec; defaults to `~/.config` |
+| `XDG_CACHE_HOME` | Base dir for the version-check cache; defaults to `~/.cache` |
+| `CAPFIRE_CACHE_DIR` | Override the version-check cache directory directly |
+| `CAPFIRE_DISABLE_UPDATE_CHECK` | When `1`/`true`/`yes`/`on`, disables the version check entirely (overrides config) |
+
+## Update check
+
+After every command, capfire prints a one-line notice on stderr if a
+newer release is available on GitHub. The check is cached on disk for
+24 hours and runs in the background — the first invocation may add up
+to ~1s at exit while it fetches; subsequent calls are essentially free.
+
+Opt out three ways:
+
+1. Per-config:
+   ```yaml
+   update_check: false
+   ```
+2. Per-shell:
+   ```bash
+   export CAPFIRE_DISABLE_UPDATE_CHECK=1
+   ```
+3. Dev builds (binaries built from source without `-ldflags`) skip the
+   check automatically — no contributor sees "update available" while
+   hacking on the client.
+
+Force a synchronous check (bypass the 24h cache):
+
+```bash
+capfire version --check
+```
+
+The cache lives at `~/.cache/capfire/version-check.json`. Delete it to
+force the next run to refresh.
 
 ## Multiple servers
 
