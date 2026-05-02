@@ -30,10 +30,28 @@ type Config struct {
 	Host  string `yaml:"host"`
 	Token string `yaml:"token"`
 
+	// UpdateCheck controls the "is there a new release available?" notice
+	// printed at the end of every command. Pointer-to-bool so we can tell
+	// "explicitly disabled" (false) apart from "never set" (nil → defaults
+	// to enabled). Without the pointer, an existing config file written
+	// before this field was added would silently disable the check.
+	UpdateCheck *bool `yaml:"update_check,omitempty"`
+
 	// Path is the absolute path the config was loaded from. Zero value when
 	// the Config was constructed programmatically (e.g. during `capfire
 	// config` before the first save).
 	Path string `yaml:"-"`
+}
+
+// UpdateCheckEnabled reports whether the version-check pipeline should
+// run for this config. Default is true; only an explicit
+// `update_check: false` in YAML opts the user out at the file level
+// (the env var has its own opt-out path).
+func (c *Config) UpdateCheckEnabled() bool {
+	if c == nil || c.UpdateCheck == nil {
+		return true
+	}
+	return *c.UpdateCheck
 }
 
 // Load reads the config file from disk. Returns ErrNotConfigured when no
