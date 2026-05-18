@@ -13,7 +13,7 @@ gem 'puma', '~> 8.0'
 gem 'jwt', '~> 3.1'
 
 # HTTP client for Cloudflare API
-gem 'faraday', '~> 2.9'
+gem 'faraday', '~> 2.14'
 gem 'faraday-retry', '~> 2.2'
 
 # CLI
