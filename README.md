@@ -59,8 +59,8 @@ Client (on your laptop):
 # Once there is a public release:
 curl -sSL https://raw.githubusercontent.com/ricardo5401/capfire/main/scripts/download-client.sh | bash
 
-# Or via Homebrew:
-brew tap ricardo5401/capfire && brew install capfire
+# Or via Homebrew (fully-qualified name trusts only this formula):
+brew install ricardo5401/capfire/capfire
 
 # Or from a clone (builds from source):
 git clone git@github.com:ricardo5401/capfire.git

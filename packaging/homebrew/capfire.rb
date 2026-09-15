@@ -14,10 +14,12 @@
 #   4. Compute SHA256 of each tarball (or pull them from `checksums.txt`
 #      in the release assets) and update the `sha256` strings below.
 #
-#   5. Commit + push the formula repo. Users install with:
+#   5. Commit + push the formula repo. Users install with the
+#      fully-qualified formula name, which taps the repo and trusts only
+#      this formula in one step (Homebrew 6.0+ requires explicit trust
+#      for non-official taps — see https://docs.brew.sh/Tap-Trust):
 #
-#        brew tap ricardo5401/capfire
-#        brew install capfire
+#        brew install ricardo5401/capfire/capfire
 #
 # When you cut a new release, bump `version` and update the four sha256
 # values. A later iteration can automate this with a second GitHub Actions
