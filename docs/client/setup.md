@@ -40,11 +40,18 @@ binary with mode 0755.
 Once the Homebrew tap is published:
 
 ```bash
-brew tap ricardo5401/capfire
-brew install capfire
+brew install ricardo5401/capfire/capfire
 ```
 
-Upgrade later with `brew upgrade capfire`.
+The fully-qualified name (`user/tap/formula`) taps the repo and trusts
+only this formula in one step. Homebrew 6.0+ requires explicit trust for
+non-official taps ([Tap Trust](https://docs.brew.sh/Tap-Trust)); running
+`brew tap ricardo5401/capfire` on its own and then `brew install capfire`
+fails with `Refusing to load formula ... from untrusted tap`.
+
+Upgrade later with `brew upgrade ricardo5401/capfire/capfire` (or
+`brew upgrade capfire` once you've separately run
+`brew trust --formula ricardo5401/capfire/capfire`).
 
 ## Install method 3 — apt (Debian / Ubuntu)
 
