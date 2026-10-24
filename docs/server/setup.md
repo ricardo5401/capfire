@@ -9,7 +9,7 @@ HTTPS API authenticated by JWT bearer tokens.
 You are responsible for providing:
 
 - **A Linux host** with systemd (Ubuntu 22.04+, Debian 12+ tested).
-- **Ruby 3.2+** installed via RVM, rbenv, asdf, or the distro package.
+- **Ruby 3.3.13** installed via RVM, rbenv, asdf, or the distro package.
   The installer detects whichever one you have.
 - **PostgreSQL** reachable via a connection string. The installer calls
   `rails db:prepare` on an empty database.

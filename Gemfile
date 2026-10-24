@@ -2,7 +2,7 @@
 
 source 'https://rubygems.org'
 
-ruby '3.2.2'
+ruby '3.3.13'
 
 # Rails API
 gem 'rails', '~> 8.1.3'

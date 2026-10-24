@@ -21,7 +21,7 @@
 #      even from a plain root shell without RVM/rbenv/asdf on PATH.
 #
 # What this script does NOT do:
-#   - Install Ruby. You must have Ruby 3.2+ available (via RVM, rbenv, asdf
+#   - Install Ruby. You must have Ruby 3.3.13 available (via RVM, rbenv, asdf
 #     or system packages). Run `ruby -v` as the invoking user first.
 #   - Install Postgres. You must provide a DATABASE_URL pointing at a reachable
 #     Postgres server. The DB itself is created by `db:prepare`.
@@ -172,7 +172,7 @@ if [[ -z "$RUBY_BIN" ]]; then
 fi
 
 if [[ -z "$RUBY_BIN" || -z "$BUNDLE_BIN" ]]; then
-  fail "could not locate ruby/bundle. Install Ruby 3.2+ via RVM/rbenv/asdf and retry, or pass --ruby-bin and --bundle-bin explicitly."
+  fail "could not locate ruby/bundle. Install Ruby 3.3.13 via RVM/rbenv/asdf and retry, or pass --ruby-bin and --bundle-bin explicitly."
 fi
 
 RUBY_VERSION="$("$RUBY_BIN" -e 'print RUBY_VERSION' 2>/dev/null || echo unknown)"
@@ -180,8 +180,8 @@ info "Using ruby $RUBY_VERSION at ${C_DIM}$RUBY_BIN${C_RESET}  (detected via: $R
 info "Using bundler at ${C_DIM}$BUNDLE_BIN${C_RESET}"
 
 case "$RUBY_VERSION" in
-  3.2.*|3.3.*|3.4.*) ;;
-  *) warn "Capfire is tested with Ruby 3.2.x — you have $RUBY_VERSION. Proceed at your own risk." ;;
+  3.3.13) ;;
+  *) warn "Capfire requires Ruby 3.3.13 — you have $RUBY_VERSION. Proceed at your own risk." ;;
 esac
 
 # ---------------------------------------------------------------------------
